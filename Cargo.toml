@@ -1,0 +1,23 @@
+[package]
+name = "ftp2mfs"
+version = "0.1.0"
+authors = ["Julius Michaelis <gitter@liftm.de>"]
+edition = "2018"
+
+[dependencies]
+
+# Only here because of the MFS shim
+bytes = "0.5.4"
+futures-core = "0.3.5"
+futures-util = "0.3.5"
+
+#ftp = "3.0.1"
+ftp = { git = "https://github.com/wnklmnn/rust-ftp.git", rev = "0a122e412509a5a4b2990edbcfd926ce485a1e52" } # branch = "updateDeps"
+clap = "3.0.0-beta.1"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+pathdiff = "0.2.0"
+ipfs-api = "0.7.2"
+tokio = { version = "0.2.21", features = ["macros"] }
+crossbeam-channel = "0.4.2"
