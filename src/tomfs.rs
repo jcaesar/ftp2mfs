@@ -92,7 +92,7 @@ impl ToMfs {
 		} else {
 			self.mfs.rm(&curr.join("meta")).await.unwrap();
 		}
-		self.mfs.cp(&sync.join("meta"),     &curr.join("meta")    ).await.unwrap();
+		self.mfs.cp(&sync.join("meta"), &curr.join("meta")).await.unwrap();
 		self.mfs.rm_r(sync).await.unwrap();
 	}
 }

@@ -95,3 +95,98 @@ impl <'a> Iterator for PathAncestors<'a> {
 		return next;
 	}
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn threenew() -> SyncInfo {
+        let mut new = SyncInfo::new();
+        let dummyfai = || FileInfo { t: None, s: None, deleted: None };
+        new.files.insert(Into::into("/a"), dummyfai());
+        new.files.insert(Into::into("/b"), dummyfai());
+        new.files.insert(Into::into("/c"), dummyfai());
+        return new;
+    }
+    fn abc() -> HashSet<PathBuf> {
+        stoset(&vec!["/a", "/b", "/c"])
+    }
+
+    fn toset(l: &[PathBuf]) -> HashSet<PathBuf> {
+        l.iter().map(Clone::clone).collect()
+    }
+    fn stoset(l: &[&str]) -> HashSet<PathBuf> {
+        l.iter().map(Into::into).collect()
+    }
+
+    #[test]
+    fn all_quiet_in_the_west() {
+        let old = SyncInfo::new();
+        let new = SyncInfo::new();
+        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0));
+        assert!(sa.get.is_empty(), "{:?}", sa);
+        assert!(sa.delete.is_empty(), "{:?}", sa);
+    }
+
+    #[test]
+    fn no_new_is_good_new() {
+        let old = threenew();
+        let new = threenew();
+        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0));
+        assert!(sa.get.is_empty(), "{:?}", sa);
+        assert!(sa.delete.is_empty(), "{:?}", sa);
+    }
+
+    #[test]
+    fn allnew_allsync() {
+        let old = SyncInfo::new();
+        let new = threenew();
+        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0));
+        assert_eq!(toset(&sa.get), abc(), "Three new files: {:?}", sa);
+        assert!(sa.delete.is_empty(), "No existing, no deletions: {:?}", sa);
+    }
+
+    #[test]
+    fn allgone_alldelete() {
+        let new = SyncInfo::new();
+        let old = threenew();
+        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0));
+        assert_eq!(toset(&sa.delete), vec!["/"].into_iter().map(Into::into).collect::<HashSet<PathBuf>>(), "All deleted -> root deleted: {:?}", sa);
+        assert!(sa.get.is_empty(), "No get {:?}", sa);
+    }
+
+    #[test]
+    fn keep() {
+        let new = SyncInfo::new();
+        let old = threenew();
+        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(1));
+        assert!(sa.get.is_empty(), "No get {:?}", sa);
+        assert!(sa.delete.is_empty(), "At first, it doesn't know when a file was deleted. So it should need to keep it, no matter how short the retention is: {:?}", sa);
+    }
+    #[test]
+    fn then_delete() {
+        let new = SyncInfo::new();
+        let mut old = threenew();
+        let now = Utc::now();
+        for (_,i) in old.files.iter_mut() {
+            i.deleted = Some(now - chrono::Duration::weeks(100 * 52));
+        }
+        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(1));
+        assert!(sa.get.is_empty(), "No get {:?}", sa);
+        assert_eq!(toset(&sa.delete), stoset(&vec!["/"]), "All deleted -> root deleted: {:?}", sa);
+    }
+
+    #[test]
+    fn info_changed() {
+        let mut old = threenew();
+        let mut new = threenew();
+        let now = Utc::now();
+        old.files.get_mut(&PathBuf::new().join("/a")).unwrap().s = Some(1);
+        new.files.get_mut(&PathBuf::new().join("/a")).unwrap().s = Some(2);
+        old.files.get_mut(&PathBuf::new().join("/b")).unwrap().t = Some(now);
+        new.files.get_mut(&PathBuf::new().join("/b")).unwrap().t = Some(now + chrono::Duration::seconds(1));
+        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(42));
+        assert!(sa.delete.is_empty(), "Don't delete on change {:?}", sa);
+        assert_eq!(toset(&sa.get), stoset(&vec!["/a", "/b"]), "Get changed: {:?}", sa);
+    }
+}
