@@ -61,8 +61,6 @@ async fn main() {
 
 	println!("{:#?}", sa);
 	out.apply(sa, &FtpProvider::new(ftp_stream)).await;
-
-	out.finalize().await;
 }
 
 
@@ -184,29 +182,35 @@ impl ToMfs {
 			Err(_) => SyncInfo::default(),
 		}
 	}
-	async fn apply(&self, sa: SyncActs, p: &dyn Provider) {	
+	async fn apply(&self, sa: SyncActs, p: &dyn Provider) {
 		// TODO: desequentialize
 		let sync = &self.base.join("sync");
 		let syncdata = sync.join("data");
 
 		let SyncActs { meta, get, delete } = sa;
-		
+
 		self.mfs.emplace(&sync.join("meta"), Cursor::new(serde_json::to_vec(&meta).unwrap())).await.unwrap();
 
-		for d in delete {
+		for d in delete.iter() {
 			self.mfs.rm_r(&syncdata.join(d)).await.unwrap();
 		}
-		for a in get {
+		for a in get.iter() {
 			let pth = &syncdata.join(&a);
 			self.mfs.mkdirs(pth.parent().unwrap()).await.unwrap();
 			self.mfs.emplace(pth, p.get(&a)).await.unwrap();
-		}	
+		}
+
+		if delete.is_empty() && get.is_empty() {
+			self.finalize_unchanged().await
+		} else {
+			self.finalize_changes().await
+		}
 	}
-	async fn finalize(&self) {
+	async fn finalize_changes(&self) {
 		let curr = &self.base.join("curr");
 		let sync = &self.base.join("sync");
 		let prev = &self.base.join("prev");
-		let hascurr = self.mfs.stat(curr).await.is_ok();	
+		let hascurr = self.mfs.stat(curr).await.is_ok();
 		if hascurr {
 			self.mfs.mv(curr, prev).await.unwrap();
 		}
@@ -216,6 +220,20 @@ impl ToMfs {
 		if hascurr {
 			self.mfs.rm_r(prev).await.unwrap();
 		}
+	}
+	async fn finalize_unchanged(&self) {
+		let curr = &self.base.join("curr");
+		let sync = &self.base.join("sync");
+		if !self.mfs.stat(curr).await.is_ok() {
+			// WTF. Empty initial sync
+			self.mfs.mkdir(&curr.join("data")).await.unwrap();
+		} else {
+			self.mfs.rm(&curr.join("meta")).await.unwrap();
+			self.mfs.rm(&curr.join("lastsync")).await.unwrap();
+		}
+		self.mfs.cp(&sync.join("meta"),     &curr.join("meta")    ).await.unwrap();
+		self.mfs.cp(&sync.join("lastsync"), &curr.join("lastsync")).await.unwrap();
+		self.mfs.rm_r(sync).await.unwrap();
 	}
 }
 
@@ -255,7 +273,7 @@ impl Mfs {
 		{ self.ipfs.files_read(s.to_str().unwrap()) }
 
 	pub async fn read_fully(&self, s: &Path) -> Result<Vec<u8>, ipfs_api::response::Error> {
-		use futures_util::stream::TryStreamExt;	
+		use futures_util::stream::TryStreamExt;
 		self.read(s)
 			.map_ok(|chunk| chunk.to_vec())
 		    .try_concat()
