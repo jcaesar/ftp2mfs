@@ -42,10 +42,10 @@ async fn main() {
 		reprieve: humantime::Duration,
 	}
 	let opts: Opts = Opts::parse();
-	println!("{:?}", opts);
 
 	let out = ToMfs::new(&opts.api, Path::new(&opts.base).to_path_buf());
 	out.prepare().await;
+	let cur = out.get_last_state().await;
 
 	let mut ftp_stream = FtpStream::connect(format!("{}:21", opts.connect)).unwrap();
 	ftp_stream.login(&opts.user, &opts.pass).unwrap();
@@ -55,7 +55,6 @@ async fn main() {
 		ftp_stream.cwd(cwd).unwrap();
 	}
 
-	let cur = out.get_last_state().await;
 	let ups = Recursor::run(&mut ftp_stream);
 	let sa = SyncActs::new(cur, ups, *opts.reprieve);
 
@@ -169,8 +168,6 @@ impl ToMfs {
 			self.mfs.cp(currdata, &sync.join("data")).await.unwrap();
 		}
 		self.mfs.rm_r(&self.base.join("prev")).await.ok();
-
-		self.mfs.emplace(&sync.join("lastsync"), Cursor::new(serde_json::to_vec(&Utc::now()).unwrap())).await.unwrap();
 		// "Lock"
 		let pid = Cursor::new(format!("{}", std::process::id()));
 		self.mfs.emplace(pidfile, pid).await.unwrap();
@@ -179,7 +176,7 @@ impl ToMfs {
 		let meta = &self.base.join("curr").join("meta");
 		match self.mfs.stat(meta).await {
 			Ok(_) => serde_json::from_slice(&self.mfs.read_fully(meta).await.unwrap()).unwrap(),
-			Err(_) => SyncInfo::default(),
+			Err(_) => SyncInfo::new(),
 		}
 	}
 	async fn apply(&self, sa: SyncActs, p: &dyn Provider) {
@@ -229,10 +226,8 @@ impl ToMfs {
 			self.mfs.mkdir(&curr.join("data")).await.unwrap();
 		} else {
 			self.mfs.rm(&curr.join("meta")).await.unwrap();
-			self.mfs.rm(&curr.join("lastsync")).await.unwrap();
 		}
 		self.mfs.cp(&sync.join("meta"),     &curr.join("meta")    ).await.unwrap();
-		self.mfs.cp(&sync.join("lastsync"), &curr.join("lastsync")).await.unwrap();
 		self.mfs.rm_r(sync).await.unwrap();
 	}
 }
@@ -355,13 +350,16 @@ impl SyncActs {
 #[derive(Serialize, Deserialize, Debug)]
 struct SyncInfo {
 	version: u64,
-	files: HashMap<PathBuf, FileInfo>
+	files: HashMap<PathBuf, FileInfo>,
+	#[serde(default = "Utc::now")]
+	lastsync: DateTime<Utc>,
 }
 
-impl Default for SyncInfo {
-	fn default() -> SyncInfo { SyncInfo {
+impl SyncInfo {
+	fn new() -> SyncInfo { SyncInfo {
 		version: 1,
-		files: HashMap::new()
+		files: HashMap::new(),
+		lastsync: Utc::now(),
 	}}
 }
 
@@ -391,7 +389,7 @@ impl <'a> Recursor <'a> {
 		let mut r = Recursor {
 			ftp,
 			base: Path::new(&wd).to_path_buf(),
-			result: Default::default()
+			result: SyncInfo::new(), // Marks the sync start time
 		};
 		r.rec();
 		r.result
