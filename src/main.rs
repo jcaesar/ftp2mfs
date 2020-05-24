@@ -170,7 +170,7 @@ impl ToMfs {
 		self.mfs.rm_r(&self.base.join("prev")).await.ok();
 		// "Lock"
 		let pid = Cursor::new(format!("{}", std::process::id()));
-		self.mfs.emplace(pidfile, pid).await.unwrap();
+		self.mfs.emplace(pidfile, 0, pid).await.unwrap();
 	}
 	async fn get_last_state(&self) -> SyncInfo {
 		let meta = &self.base.join("curr").join("meta");
@@ -186,15 +186,16 @@ impl ToMfs {
 
 		let SyncActs { meta, get, delete } = sa;
 
-		self.mfs.emplace(&sync.join("meta"), Cursor::new(serde_json::to_vec(&meta).unwrap())).await.unwrap();
+		let metadata = serde_json::to_vec(&meta).unwrap();
+		self.mfs.emplace(&sync.join("meta"), metadata.len(), Cursor::new(metadata)).await.unwrap();
 
 		for d in delete.iter() {
 			self.mfs.rm_r(&syncdata.join(d)).await.unwrap();
 		}
 		for a in get.iter() {
-			let pth = &syncdata.join(&a);
+			let pth = &syncdata.join(a);
 			self.mfs.mkdirs(pth.parent().unwrap()).await.unwrap();
-			self.mfs.emplace(pth, p.get(&a)).await.unwrap();
+			self.mfs.emplace(pth, meta.files.get(a).map(|i| i.s).flatten().unwrap_or(0), p.get(a)).await.unwrap();
 		}
 
 		if delete.is_empty() && get.is_empty() {
@@ -260,9 +261,6 @@ impl Mfs {
 	pub async fn cp(&self, s: &Path, d: &Path)
 		-> Result<(), ipfs_api::response::Error>
 		{ self.ipfs.files_cp(s.to_str().unwrap(), d.to_str().unwrap()).await }
-	pub async fn emplace<R: 'static + Read + Send + Sync>(&self, d: &Path, data: R)
-		-> Result<(), ipfs_api::response::Error>
-		{ self.ipfs.files_write(d.to_str().unwrap(), true, true, data).await }
 	pub fn read(&self, s: &Path)
 		-> impl futures_core::stream::Stream<Item = Result<bytes::Bytes, ipfs_api::response::Error>>
 		{ self.ipfs.files_read(s.to_str().unwrap()) }
@@ -274,6 +272,18 @@ impl Mfs {
 		    .try_concat()
 			.await
 		// Optimally, I'd have a version of this that returns a Read or similar…
+	}
+	pub async fn emplace<R: 'static + Read + Send + Sync>(&self, d: &Path, expected: usize, data: R)
+		-> Result<(), ipfs_api::response::Error>
+	{
+		if expected < 1<<20 {
+			self.ipfs.files_write(d.to_str().unwrap(), true, true, data).await?;
+		} else {
+			let added = self.ipfs.add(data).await?;
+			self.ipfs.files_cp(&format!("/ipfs/{}", added.hash), d.to_str().unwrap()).await?;
+			self.ipfs.pin_rm(&added.hash, true).await?;
+		}
+		Ok(())
 	}
 }
 
