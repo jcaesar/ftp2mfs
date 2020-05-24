@@ -11,7 +11,7 @@ bytes = "0.5.4"
 futures-core = "0.3.5"
 futures-util = "0.3.5"
 
-#ftp = "3.0.1"
+#ftp = "3.0.1" # Rust rots amazingly fast
 ftp = { git = "https://github.com/wnklmnn/rust-ftp.git", rev = "0a122e412509a5a4b2990edbcfd926ce485a1e52" } # branch = "updateDeps"
 clap = "3.0.0-beta.1"
 serde_json = "1.0"
@@ -21,3 +21,4 @@ pathdiff = "0.2.0"
 ipfs-api = "0.7.2"
 tokio = { version = "0.2.21", features = ["macros"] }
 crossbeam-channel = "0.4.2"
+humantime = "2.0.0"

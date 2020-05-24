@@ -34,9 +34,12 @@ async fn main() {
 		/// IPFS files (mfs) base path
 		#[clap(short, long)]
 		base: String,
-		/// IPFS api
+		/// IPFS api url
 		#[clap(short, long, default_value = "http://localhost:5001/")]
 		api: String,
+		/// Reprieve period for local files after deletion on server
+		#[clap(short, long, default_value = "0 days")]
+		reprieve: humantime::Duration,
 	}
 	let opts: Opts = Opts::parse();
 	println!("{:?}", opts);
@@ -54,7 +57,7 @@ async fn main() {
 
 	let cur = out.get_last_state().await;
 	let ups = Recursor::run(&mut ftp_stream);
-	let sa = SyncActs::new(cur, ups);
+	let sa = SyncActs::new(cur, ups, *opts.reprieve);
 
 	println!("{:#?}", sa);
 	out.apply(sa, &FtpProvider::new(ftp_stream)).await;
@@ -168,6 +171,8 @@ impl ToMfs {
 			self.mfs.cp(currdata, &sync.join("data")).await.unwrap();
 		}
 		self.mfs.rm_r(&self.base.join("prev")).await.ok();
+
+		self.mfs.emplace(&sync.join("lastsync"), Cursor::new(serde_json::to_vec(&Utc::now()).unwrap())).await.unwrap();
 		// "Lock"
 		let pid = Cursor::new(format!("{}", std::process::id()));
 		self.mfs.emplace(pidfile, pid).await.unwrap();
@@ -260,18 +265,16 @@ impl Mfs {
 }
 
 pub struct PathAncestors<'a> {
-	p: &'a Path,
+	p: Option<&'a Path>,
 }
 impl PathAncestors<'_> {
-	pub fn new(p: &Path) -> PathAncestors { PathAncestors { p } }
+	pub fn new(p: &Path) -> PathAncestors { PathAncestors { p: Some(p) } }
 }
 impl <'a> Iterator for PathAncestors<'a> {
 	type Item = &'a Path;
 	fn next(&mut self) -> Option<&'a Path> {
-		let next = self.p.parent();
-		for p in next {
-			self.p = p;
-		};
+		let mut next = self.p?.parent();
+		std::mem::swap(&mut next, &mut self.p);
 		return next;
 	}
 }
@@ -285,45 +288,43 @@ struct SyncActs {
 	get: Vec<PathBuf>,
 }
 impl SyncActs {
-	// This would be much nicer if it was two tree structures
-	// But I don't like trees. Especially not in Rust.
-	// TODO: I decided not to delete things that will be overwritten after writing this.
-	fn new(cur: SyncInfo, ups: SyncInfo) -> SyncActs {
-		// Calculate deleted files
-		let mut file_deletes: HashSet<&Path> = HashSet::new();
+	fn new(cur: SyncInfo, mut ups: SyncInfo, reprieve: std::time::Duration) -> SyncActs {
+		let reprieve = chrono::Duration::from_std(reprieve).unwrap();
+		// Calculate deleted files (and folders - don't keep empty folders)
+		let mut deletes: HashSet<&Path> = HashSet::new();
 		for (f, i) in cur.files.iter() {
-			if ups.files.get(f).map(|v| v != i).unwrap_or(true) {
-				file_deletes.insert(&f);
+			if !ups.files.contains_key(f) {
+				let now = Utc::now();
+				let deleted = i.deleted.unwrap_or_else(|| now);
+				if now.signed_duration_since(deleted) < reprieve {
+					ups.files.insert(f.clone(), FileInfo { deleted: Some(deleted), ..*i });
+				} else {
+					for a in PathAncestors::new(f) {
+						deletes.insert(a);
+					}
+				}
 			}
 		};
-		let file_deletes = file_deletes;
-
-		// Prepare for folder deletes
-		let mut folder_deletes: HashSet<&Path> = HashSet::new();
-		for f in file_deletes.iter() {
-			for a in PathAncestors::new(f) {
-				folder_deletes.insert(a);
-			}
-		}
 
 		// Calculate adds and make sure no needed folders are deleted
 		let mut gets: HashSet<&Path> = HashSet::new();
-		for (f, _) in ups.files.iter() {
-			if file_deletes.contains(id::<&Path>(f)) || !cur.files.contains_key(f) {
+		for (f, i) in ups.files.iter() {
+			if i.deleted.is_some() {
+				continue;
+			}
+			if !cur.files.get(f).filter(|existing| &i == existing).is_some() {
 				gets.insert(&f);
 			}
 			for a in PathAncestors::new(f) {
-				folder_deletes.remove(a);
+				deletes.remove(a);
 			}
 		}
-		let folder_deletes = folder_deletes;
 		let gets = gets;
 
 		// Finally, calculate optized set of paths to rm -r
 		let deletes: Vec<PathBuf> =
-			file_deletes.into_iter()
-			.chain(folder_deletes.iter().map(|x| *x))
-			.filter(|d| !PathAncestors::new(d).any(|d| folder_deletes.contains(d)) && !gets.contains(d))
+			deletes.iter().map(|x| *x)
+			.filter(|d| !PathAncestors::new(d).skip(1).any(|d| deletes.contains(d)))
 			.map(Path::to_path_buf)
 			.collect();
 
