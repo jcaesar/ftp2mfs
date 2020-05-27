@@ -22,3 +22,9 @@ ipfs-api = "0.7.2"
 tokio = { version = "0.2.21", features = ["macros"] }
 crossbeam-channel = "0.4.2"
 humantime = "2.0.0"
+
+[dev-dependencies]
+libunftp = "0.11.0"
+tokio = { version = "0.2.21", features = ["full", "macros"] }
+async-trait = "0.1.31"
+unmemftp = { git = "https://github.com/jcaesar/unmemftp.git", rev = "8da3c3bb078b715d502ac0ecd89363d515f2e819" } # = { "path" = "../unmemftp" }

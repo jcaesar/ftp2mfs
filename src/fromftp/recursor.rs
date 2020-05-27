@@ -42,3 +42,25 @@ impl <'a> Recursor <'a> {
 		}
 	}
 }
+
+#[cfg(test)]
+mod test {
+	use super::*;
+	use super::super::memftp::*;
+	use std::collections::HashSet;
+
+	#[tokio::test(threaded_scheduler)]
+	pub async fn main() {
+		let addr = unmemftp::serve(Box::new(abc)).await;
+
+		let mut ftp_stream = FtpStream::connect(addr).unwrap();
+		ftp_stream.login("anonymous", "onymous").unwrap();
+		ftp_stream.transfer_type(ftp::types::FileType::Binary).unwrap();
+		let ups = Recursor::run(&mut memstream(Box::new(abc)).await);
+
+		assert_eq!(
+			ups.files.iter().map(|(p,_)| p.to_path_buf()).collect::<HashSet<PathBuf>>(),
+			vec![PathBuf::from("a"), PathBuf::from("b/c")].into_iter().collect::<HashSet<PathBuf>>(),
+		);
+	}
+}
