@@ -44,10 +44,11 @@ impl ToMfs {
 		self.lock()
 			.await.with_context(|| format!("Failed to create lock in {:?}", self.sync()))?;
 		if recovery_required {
-			self.recover().await
+			self.recover()
+				.await.context("failed to recover from failed sync")
 		} else {
 			self.get_state(self.currmeta())
-				.await.context("failed to recover from failed sync")
+				.await
 		}
 	}
 	async fn check_existing(&self) -> Result<bool> {
@@ -106,6 +107,8 @@ impl ToMfs {
 		for d in delete.iter() {
 			if !self.mfs.exists(self.syncdata().join(d)).await? {
 				curr.files.remove(d);
+				// We could also restore it from curr, but we deleted it once because it was gone
+				// from the server. Better keep it deleted locally, too.
 			}
 		}
 		let mut paths_for_deletion: HashSet<&Path> = HashSet::new();
@@ -151,7 +154,10 @@ impl ToMfs {
 		}
 		for p in paths_for_deletion.iter() {
 			if p.parent().map(|p| !paths_for_deletion.contains(p)).unwrap_or(false) {
-				self.mfs.rm_r(p).await?;
+				let pfs = &self.syncdata().join(p);
+				if self.mfs.exists(pfs).await? {
+					self.mfs.rm_r(pfs).await?;
+				}
 			}
 		}
 		Ok(curr)
