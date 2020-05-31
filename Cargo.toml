@@ -22,9 +22,14 @@ ipfs-api = "0.7.2"
 tokio = { version = "0.2.21", features = ["macros"] }
 crossbeam-channel = "0.4.2"
 humantime = "2.0.0"
+anyhow = "1.0"
+failure = "0.1.8" # ipfs-api leaking "implementation details"… -.-
+futures = "0.3.5" # likewise, from ipfs
+hostname = "0.3"
+nanoid = "0.3"
 
 [dev-dependencies]
 libunftp = "0.11.0"
 tokio = { version = "0.2.21", features = ["full", "macros"] }
 async-trait = "0.1.31"
-unmemftp = { git = "https://github.com/jcaesar/unmemftp.git", rev = "8da3c3bb078b715d502ac0ecd89363d515f2e819" } # = { "path" = "../unmemftp" }
+unmemftp = { git = "https://github.com/jcaesar/unmemftp.git", rev = "adc2c276790864cd0887212c62da81b8ac88c0db" } # = { "path" = "../unmemftp" }

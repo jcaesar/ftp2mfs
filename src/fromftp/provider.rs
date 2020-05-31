@@ -52,7 +52,7 @@ impl FtpProvider {
 impl crate::provider::Provider for FtpProvider {
 	fn get(&self, p: &Path) -> Box<dyn Read + Send + Sync> {
 		let (sender, receiver) = bounded(128);
-		self.mkreq.send((p.to_path_buf(), sender)).unwrap();
+		self.mkreq.send((p.to_path_buf(), sender)).expect("FTP client unexpectedly exited");
 		Box::new(ChannelReader { receiver, current: Cursor::new(vec![]) })
 	}
 }

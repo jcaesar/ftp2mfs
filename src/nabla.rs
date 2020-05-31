@@ -3,6 +3,7 @@ use serde::{ Deserialize, Serialize };
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::{ PathBuf, Path };
+use anyhow::{ Result, Context };
 
 #[derive(Debug)]
 pub struct SyncActs {
@@ -11,8 +12,9 @@ pub struct SyncActs {
 	pub get: Vec<PathBuf>,
 }
 impl SyncActs {
-	pub fn new(cur: SyncInfo, mut ups: SyncInfo, reprieve: std::time::Duration) -> SyncActs {
-		let reprieve = chrono::Duration::from_std(reprieve).unwrap();
+	pub fn new(cur: SyncInfo, mut ups: SyncInfo, reprieve: std::time::Duration) -> Result<SyncActs> {
+		let reprieve = chrono::Duration::from_std(reprieve)
+            .with_context(|| format!("Outlandish reprieve duration specified: {:?}", reprieve))?;
 		// Calculate deleted files (and folders - don't keep empty folders)
 		let mut deletes: HashSet<&Path> = HashSet::new();
 		for (f, i) in cur.files.iter() {
@@ -53,7 +55,7 @@ impl SyncActs {
 
 		// Ret
 		let gets = gets.into_iter().map(Path::to_path_buf).collect();
-		return SyncActs { meta: ups, delete: deletes, get: gets };
+		Ok(SyncActs { meta: ups, delete: deletes, get: gets })
 	}
 }
 
@@ -123,7 +125,7 @@ mod test {
     fn all_quiet_in_the_west() {
         let old = SyncInfo::new();
         let new = SyncInfo::new();
-        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0));
+        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0)).unwrap();
         assert!(sa.get.is_empty(), "{:?}", sa);
         assert!(sa.delete.is_empty(), "{:?}", sa);
     }
@@ -132,7 +134,7 @@ mod test {
     fn no_new_is_good_new() {
         let old = threenew();
         let new = threenew();
-        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0));
+        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0)).unwrap();
         assert!(sa.get.is_empty(), "{:?}", sa);
         assert!(sa.delete.is_empty(), "{:?}", sa);
     }
@@ -141,7 +143,7 @@ mod test {
     fn allnew_allsync() {
         let old = SyncInfo::new();
         let new = threenew();
-        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0));
+        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0)).unwrap();
         assert_eq!(toset(&sa.get), abc(), "Three new files: {:?}", sa);
         assert!(sa.delete.is_empty(), "No existing, no deletions: {:?}", sa);
     }
@@ -150,7 +152,7 @@ mod test {
     fn allgone_alldelete() {
         let new = SyncInfo::new();
         let old = threenew();
-        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0));
+        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0)).unwrap();
         assert_eq!(toset(&sa.delete), vec!["/"].into_iter().map(Into::into).collect::<HashSet<PathBuf>>(), "All deleted -> root deleted: {:?}", sa);
         assert!(sa.get.is_empty(), "No get {:?}", sa);
     }
@@ -159,7 +161,7 @@ mod test {
     fn keep() {
         let new = SyncInfo::new();
         let old = threenew();
-        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(1));
+        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(1)).unwrap();
         assert!(sa.get.is_empty(), "No get {:?}", sa);
         assert!(sa.delete.is_empty(), "At first, it doesn't know when a file was deleted. So it should need to keep it, no matter how short the retention is: {:?}", sa);
     }
@@ -171,7 +173,7 @@ mod test {
         for (_,i) in old.files.iter_mut() {
             i.deleted = Some(now - chrono::Duration::weeks(100 * 52));
         }
-        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(1));
+        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(1)).unwrap();
         assert!(sa.get.is_empty(), "No get {:?}", sa);
         assert_eq!(toset(&sa.delete), stoset(&vec!["/"]), "All deleted -> root deleted: {:?}", sa);
     }
@@ -185,7 +187,7 @@ mod test {
         new.files.get_mut(&PathBuf::new().join("/a")).unwrap().s = Some(2);
         old.files.get_mut(&PathBuf::new().join("/b")).unwrap().t = Some(now);
         new.files.get_mut(&PathBuf::new().join("/b")).unwrap().t = Some(now + chrono::Duration::seconds(1));
-        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(42));
+        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(42)).unwrap();
         assert!(sa.delete.is_empty(), "Don't delete on change {:?}", sa);
         assert_eq!(toset(&sa.get), stoset(&vec!["/a", "/b"]), "Get changed: {:?}", sa);
     }
