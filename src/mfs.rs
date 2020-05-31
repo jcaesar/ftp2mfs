@@ -69,6 +69,10 @@ impl Mfs {
 			.await.with_context(|| format!("mfs: ls {:?}", p.as_ref()))?
 			.entries
 	)}
+	pub async fn flush<P: AsRef<Path>>(&self, p: P) -> Result<()> { Ok(
+		self.ipfs.files_flush(Some(p.unpath()))
+			.await.with_context(|| format!("mfs: flush {:?}", p.as_ref()))?
+	)}
 	pub fn read<'a, P: AsRef<Path>>(&self, s: P) -> impl futures_core::stream::Stream<Item = Result<bytes::Bytes>> {
 		self.ipfs.files_read(s.unpath()).map(move |e| Ok(e.with_context(|| format!("mfs: reading {:?}", s.as_ref()))?))
 	}

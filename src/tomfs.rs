@@ -68,6 +68,7 @@ impl ToMfs {
 		);
 		self.mfs.mkdirs(self.piddir()).await?;
 		self.mfs.emplace(self.piddir().join(&self.id), pid.len(), Cursor::new(pid)).await?;
+		self.mfs.flush(self.piddir()).await?; // Probably unnecessary, but eh.
 		let locks = self.mfs.ls(self.piddir()).await?;
 		ensure!(locks.iter().map(|x| x.name.as_str() ).collect::<Vec<_>>() == vec![&self.id],
 			"Locking race (Found {}), bailing out",
@@ -102,12 +103,14 @@ impl ToMfs {
 		}
 
 		if delete.is_empty() && get.is_empty() {
-			self.finalize_unchanged().await
-				.context("No data synced, clean-up failed")
+			self.finalize_unchanged()
+				.await.context("No data synced, clean-up failed")?
 		} else {
-			self.finalize_changes().await
-				.context("Sync finished successfully, but could not be installed as current set")
+			self.finalize_changes()
+				.await.context("Sync finished successfully, but could not be installed as current set")?
 		}
+		self.mfs.flush(self.piddir()).await?;
+		Ok(())
 	}
 	async fn finalize_changes(&self) -> Result<()> {
 		let hascurr = self.mfs.exists(self.curr()).await?;
