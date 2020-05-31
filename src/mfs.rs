@@ -27,9 +27,10 @@ impl Mfs {
 	pub fn new(api: &str) -> Result<Mfs> { Ok( Mfs {
 		ipfs: ipfs_api::TryFromUri::from_str(api)?,
 	})}
+	#[allow(dead_code)]
 	pub async fn stat(&self, p: &Path) -> Result<ipfs_api::response::FilesStatResponse> { Ok(
 		self.ipfs.files_stat(p.to_str().unwrap())
-			.await.with_context(|| format!("mfs: Stat {:?}", p))?
+			.await.with_context(|| format!("mfs: stat {:?}", p))?
 	)}
 	pub async fn rm_r(&self, p: &Path) -> Result<()> { Ok(
 		self.ipfs.files_rm(p.to_str().unwrap(), true)
@@ -88,5 +89,13 @@ impl Mfs {
 				.await.with_context(ctx("removing pin"))?;
 		}
 		Ok(())
+	}
+	pub async fn exists(&self, p: &Path) -> Result<bool> {
+		match self.ipfs.files_stat(p.to_str().unwrap()).await {
+			Ok(_) => return Ok(true),
+			Err(ipfs_api::response::Error::Api(ipfs_api::response::ApiError { code: 0, .. })) => return Ok(false),
+			e@Err(_) => e.with_context(|| format!("mfs: stat {:?}", p))?,
+		};
+		unreachable!("");
 	}
 }

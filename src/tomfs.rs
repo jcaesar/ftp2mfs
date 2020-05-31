@@ -24,15 +24,15 @@ impl ToMfs {
 		let currdata = &curr.join("data");
 		let sync = &self.base.join("sync");
 		let pidfile = &sync.join("pid");
-		if self.mfs.stat(sync).await.is_ok() {
-			if self.mfs.stat(pidfile).await.is_ok() {
+		if self.mfs.exists(sync).await? {
+			if self.mfs.exists(pidfile).await? {
 				bail!("Pidfile {:?} exists", pidfile)
 			} else {
 				self.mfs.rm_r(sync).await?
 			}
 		}
 		self.mfs.mkdirs(sync).await?;
-		if self.mfs.stat(currdata).await.is_ok() /* TODO: fail on real errors */ {
+		if self.mfs.exists(currdata).await? {
 			self.mfs.cp(currdata, &sync.join("data")).await?;
 		}
 		self.mfs.rm_r(&self.base.join("prev")).await.ok();
@@ -57,12 +57,12 @@ impl ToMfs {
 	}
 	pub async fn get_last_state(&self) -> Result<SyncInfo> {
 		let meta = &self.base.join("curr").join("meta");
-		match self.mfs.stat(meta).await {
-			Ok(_) => {
+		match self.mfs.exists(meta).await? {
+			true => {
 				let bytes: Vec<u8> = self.mfs.read_fully(meta).await?;
 				Ok(serde_json::from_slice(&bytes).context("JSON")?)
 			},
-			Err(_) => Ok(SyncInfo::new()), // TODO: Only do this on NotFound
+			false => Ok(SyncInfo::new()),
 		}
 	}
 	pub async fn apply(&self, sa: SyncActs, p: &dyn Provider) -> Result<()> {
@@ -96,7 +96,7 @@ impl ToMfs {
 		let curr = &self.base.join("curr");
 		let sync = &self.base.join("sync");
 		let prev = &self.base.join("prev");
-		let hascurr = self.mfs.stat(curr).await.is_ok();
+		let hascurr = self.mfs.exists(curr).await?;
 		if hascurr {
 			self.mfs.mv(curr, prev).await?;
 		}
@@ -111,7 +111,7 @@ impl ToMfs {
 	async fn finalize_unchanged(&self) -> Result<()> {
 		let curr = &self.base.join("curr");
 		let sync = &self.base.join("sync");
-		if !self.mfs.stat(curr).await.is_ok() {
+		if !self.mfs.exists(curr).await? {
 			// WTF. Empty initial sync
 			self.mfs.mkdir(&curr.join("data")).await?;
 		} else {
