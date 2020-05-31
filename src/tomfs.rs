@@ -26,9 +26,18 @@ impl ToMfs {
 		let piddir = &sync.join("pid");
 		if self.mfs.exists(sync).await? {
 			if self.mfs.exists(piddir).await? {
-				bail!("piddirs {:?} exists", piddir)
+				let list = self.mfs.ls(piddir).await?;
+				if !list.is_empty() {
+					bail!("pidfiles {:?} exists in {:?}", list, piddir)
+				} else {
+					self.mfs.rm_r(sync).await?;
+					// TODO: recover
+				}
 			} else {
-				self.mfs.rm_r(sync).await?
+				self.mfs.rm_r(sync).await?;
+				// The only reason I can imagine that this would happen is failure between
+				// mkdirs and emplace of the lock in this function.
+				// All other situations are eerie, so start afresh.
 			}
 		}
 		self.mfs.mkdirs(sync).await?;
@@ -119,6 +128,12 @@ impl ToMfs {
 		}
 		self.mfs.cp(&sync.join("meta"), &curr.join("meta")).await?;
 		self.mfs.rm_r(sync).await?;
+		Ok(())
+	}
+	pub async fn failure_clean_lock(&self) -> Result<()> {
+		self.mfs.rm_r(&self.base.join("sync").join("pid").join(&self.id)).await?;
+		// Can't remove the dir, as there is no rmdir (that only removes empty dirs)
+		// and rm -r might remove a lockfile that was just created
 		Ok(())
 	}
 }

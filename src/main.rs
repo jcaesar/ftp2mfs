@@ -48,16 +48,28 @@ async fn main() -> Result<()> {
 
 	let out = ToMfs::new(&opts.api, Path::new(&opts.base).to_path_buf())
 		.with_context(|| format!("Failed to access mfs on ipfs at {}", opts.api))?;
+	match run_sync(&opts, &out).await {
+		Ok(_) => (),
+		e@Err(_) => {
+			out.failure_clean_lock().await.ok();
+			e?;
+		}
+	}
+
+	Ok(())
+}
+
+async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<()> {
 	out.prepare().await
 		.with_context(|| format!("Failed to prepare mfs target folder {}", opts.base))?;
 	let cur = out.get_last_state().await
-		//.context("Failed to retrieve state of existing files")
+		.context("Failed to retrieve state of existing files")
 		.context("TODO: Allow recovering it")?;
 
 	let mut ftp_stream = ftp_connect(&opts)
 		.context("Failed to establish FTP connection")?;
 
-	for ref cwd in opts.cwd {
+	for cwd in &opts.cwd {
 		ftp_stream.cwd(cwd)
 			.with_context(|| format!("Cannot switch to directory {}", cwd))?;
 	}
