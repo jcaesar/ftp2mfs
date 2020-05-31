@@ -3,6 +3,7 @@ use ftp::FtpStream;
 use ftp::types::FileType;
 use std::path::Path;
 use anyhow::{ Result, Context };
+use globset::{ Glob, GlobSetBuilder, GlobSet };
 
 mod tomfs;
 mod mfs;
@@ -40,6 +41,9 @@ struct Opts {
 	/// Reprieve period for local files after deletion on server
 	#[clap(short, long, default_value = "0 days")]
 	reprieve: humantime::Duration,
+	/// Ignore glob pattern when listing files on server
+	#[clap(short, long)]
+	ignore: Vec<String>,
 }
 
 #[tokio::main(basic_scheduler)]
@@ -70,7 +74,10 @@ async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<()> {
 			.with_context(|| format!("Cannot switch to directory {}", cwd))?;
 	}
 
-	let ups = Recursor::run(&mut ftp_stream)
+	let ignore = globset(&opts.ignore)
+		.context("Constructing GlobSet for ignore list")?;
+
+	let ups = Recursor::run(&mut ftp_stream, &ignore)
 		.context("Retrieving file list")?;
 	let sa = SyncActs::new(current_set, ups, *opts.reprieve)
 		.context("Internal error: failed to generate delta")?;
@@ -88,4 +95,12 @@ fn ftp_connect(opts: &Opts) -> Result<FtpStream> {
 	ftp_stream.login(&opts.user, &opts.pass)?;
 	ftp_stream.transfer_type(FileType::Binary)?;
 	Ok(ftp_stream)
+}
+
+fn globset<T: AsRef<str>>(base: &[T]) -> Result<GlobSet> {
+	let mut globs = GlobSetBuilder::new();
+	for i in base {
+		globs.add(Glob::new(i.as_ref())?);
+	}
+	return Ok(globs.build()?);
 }
