@@ -37,8 +37,22 @@ impl ToMfs {
 		}
 		self.mfs.rm_r(&self.base.join("prev")).await.ok();
 		// "Lock"
-		let pid = Cursor::new(format!("{}", std::process::id()));
-		self.mfs.emplace(pidfile, 0, pid).await?;
+		let pid = format!("PID:{}@{}, {}\n",
+			std::process::id(),
+			hostname::get().map(|h| h.to_string_lossy().into_owned()).unwrap_or("unkown_host".to_owned()),
+			SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("Bogous clock?").as_secs(),
+		);
+		self.mfs.mkdirs(pidfile)
+			.await.context("Creating lock file directory")?;
+		self.mfs.emplace(&pidfile.join(&self.id), pid.len(), Cursor::new(pid))
+			.await.context("Creating lock file")?;
+		let locks = self.mfs.ls(pidfile)
+			.await.context("Check lock file")?;
+		ensure!(locks.iter().map(|x| x.name.as_str() ).collect::<Vec<_>>() == vec![&self.id],
+			"Locking race (Found {}), bailing out",
+			locks.iter().map(|x| x.hash.as_str()).collect::<Vec<_>>().join(", "),
+			// Mutually exclusive. Both may bail. Oh well.
+		);
 		Ok(())
 	}
 	pub async fn get_last_state(&self) -> Result<SyncInfo> {
