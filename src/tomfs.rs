@@ -23,10 +23,10 @@ impl ToMfs {
 		let curr = &self.base.join("curr");
 		let currdata = &curr.join("data");
 		let sync = &self.base.join("sync");
-		let pidfile = &sync.join("pid");
+		let piddir = &sync.join("pid");
 		if self.mfs.exists(sync).await? {
-			if self.mfs.exists(pidfile).await? {
-				bail!("Pidfile {:?} exists", pidfile)
+			if self.mfs.exists(piddir).await? {
+				bail!("piddirs {:?} exists", piddir)
 			} else {
 				self.mfs.rm_r(sync).await?
 			}
@@ -42,11 +42,11 @@ impl ToMfs {
 			hostname::get().map(|h| h.to_string_lossy().into_owned()).unwrap_or("unkown_host".to_owned()),
 			SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("Bogous clock?").as_secs(),
 		);
-		self.mfs.mkdirs(pidfile)
+		self.mfs.mkdirs(piddir)
 			.await.context("Creating lock file directory")?;
-		self.mfs.emplace(&pidfile.join(&self.id), pid.len(), Cursor::new(pid))
+		self.mfs.emplace(&piddir.join(&self.id), pid.len(), Cursor::new(pid))
 			.await.context("Creating lock file")?;
-		let locks = self.mfs.ls(pidfile)
+		let locks = self.mfs.ls(piddir)
 			.await.context("Check lock file")?;
 		ensure!(locks.iter().map(|x| x.name.as_str() ).collect::<Vec<_>>() == vec![&self.id],
 			"Locking race (Found {}), bailing out",

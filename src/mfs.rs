@@ -83,7 +83,7 @@ impl Mfs {
 			let ctx = |step: &'static str| move || format!("mfs: indirect write to {:?} failed when {}", d, step);
 			let added = self.ipfs.add(data)
 				.await.with_context(ctx("adding/pinning data normally (ipfs add) first"))?;
-			self.ipfs.files_cp(&format!("/ipfs/{}", added.hash), d.to_str().unwrap())
+			self.ipfs.files_cp(&format!("/ipfs/{}", added.hash), d.to_str().unwrap()) // TODO: Use chcid when available
 				.await.with_context(ctx("adding link to pinned data to ipfs"))?;
 			self.ipfs.pin_rm(&added.hash, true)
 				.await.with_context(ctx("removing pin"))?;
