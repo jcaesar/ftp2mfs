@@ -59,7 +59,7 @@ impl SyncActs {
 	}
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SyncInfo {
 	version: u64,
 	pub files: HashMap<PathBuf, FileInfo>,
@@ -75,7 +75,7 @@ impl SyncInfo {
 	}}
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct FileInfo {
 	pub t: Option<DateTime<Utc>>,
 	#[serde(skip_serializing_if = "Option::is_none")]
