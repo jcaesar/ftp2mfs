@@ -19,44 +19,56 @@ impl ToMfs {
 		base: base,
 		id: nanoid::nanoid!(),
 	})}
-	pub async fn prepare(&self) -> Result<()> {
-		let curr = &self.base.join("curr");
-		let currdata = &curr.join("data");
-		let sync = &self.base.join("sync");
-		let piddir = &sync.join("pid");
-		if self.mfs.exists(sync).await? {
-			if self.mfs.exists(piddir).await? {
-				let list = self.mfs.ls(piddir).await?;
+
+	fn curr(&self)     -> PathBuf { self.base.join("curr") }
+	fn sync(&self)     -> PathBuf { self.base.join("sync") }
+	fn prev(&self)     -> PathBuf { self.base.join("prev") }
+	fn currdata(&self) -> PathBuf { self.curr().join("data") }
+	fn syncdata(&self) -> PathBuf { self.sync().join("data") }
+	fn currmeta(&self) -> PathBuf { self.curr().join("meta") }
+	fn syncmeta(&self) -> PathBuf { self.sync().join("meta") }
+	fn currpid(&self)  -> PathBuf { self.curr().join("pid") }
+	fn piddir(&self)   -> PathBuf { self.sync().join("pid") }
+
+	pub async fn prepare(&self) -> Result<SyncInfo> {
+		let recovery_required = if self.mfs.exists(self.sync()).await? {
+			if self.mfs.exists(self.piddir()).await? {
+				let list = self.mfs.ls(self.piddir()).await?;
 				if !list.is_empty() {
-					bail!("pidfiles {:?} exists in {:?}", list, piddir)
+					bail!("pidfiles {:?} exists in {:?}", list, self.piddir())
 				} else {
-					self.mfs.rm_r(sync).await?;
-					// TODO: recover
+					self.mfs.rm_r(self.sync()).await?;
+					true
 				}
 			} else {
-				self.mfs.rm_r(sync).await?;
+				self.mfs.rm_r(self.sync()).await?;
 				// The only reason I can imagine that this would happen is failure between
 				// mkdirs and emplace of the lock in this function.
 				// All other situations are eerie, so start afresh.
+				false
 			}
+		} else {
+			false
+		};
+		self.mfs.mkdirs(self.sync()).await?;
+		if self.mfs.exists(self.currdata()).await? {
+			self.mfs.cp(self.currdata(), self.syncdata()).await?;
 		}
-		self.mfs.mkdirs(sync).await?;
-		if self.mfs.exists(currdata).await? {
-			self.mfs.cp(currdata, &sync.join("data")).await?;
-		}
-		self.mfs.rm_r(&self.base.join("prev")).await.ok();
-		// "Lock"
+		self.mfs.rm_r(self.prev()).await.ok();
+		self.lock()
+			.await.with_context(|| format!("Failed to create lock in {:?}", self.sync()))?;
+		//Ok(())
+		self.get_last_state().await // TODO!
+	}
+	async fn lock(&self) -> Result<()> {
 		let pid = format!("PID:{}@{}, {}\n",
 			std::process::id(),
 			hostname::get().map(|h| h.to_string_lossy().into_owned()).unwrap_or("unkown_host".to_owned()),
 			SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("Bogous clock?").as_secs(),
 		);
-		self.mfs.mkdirs(piddir)
-			.await.context("Creating lock file directory")?;
-		self.mfs.emplace(&piddir.join(&self.id), pid.len(), Cursor::new(pid))
-			.await.context("Creating lock file")?;
-		let locks = self.mfs.ls(piddir)
-			.await.context("Check lock file")?;
+		self.mfs.mkdirs(self.piddir()).await?;
+		self.mfs.emplace(self.piddir().join(&self.id), pid.len(), Cursor::new(pid)).await?;
+		let locks = self.mfs.ls(self.piddir()).await?;
 		ensure!(locks.iter().map(|x| x.name.as_str() ).collect::<Vec<_>>() == vec![&self.id],
 			"Locking race (Found {}), bailing out",
 			locks.iter().map(|x| x.hash.as_str()).collect::<Vec<_>>().join(", "),
@@ -65,10 +77,9 @@ impl ToMfs {
 		Ok(())
 	}
 	pub async fn get_last_state(&self) -> Result<SyncInfo> {
-		let meta = &self.base.join("curr").join("meta");
-		match self.mfs.exists(meta).await? {
+		match self.mfs.exists(self.currmeta()).await? {
 			true => {
-				let bytes: Vec<u8> = self.mfs.read_fully(meta).await?;
+				let bytes: Vec<u8> = self.mfs.read_fully(self.currmeta()).await?;
 				Ok(serde_json::from_slice(&bytes).context("JSON")?)
 			},
 			false => Ok(SyncInfo::new()),
@@ -76,19 +87,16 @@ impl ToMfs {
 	}
 	pub async fn apply(&self, sa: SyncActs, p: &dyn Provider) -> Result<()> {
 		// TODO: desequentialize
-		let sync = &self.base.join("sync");
-		let syncdata = sync.join("data");
-
 		let SyncActs { meta, get, delete } = sa;
 
 		let metadata = serde_json::to_vec(&meta)?;
-		self.mfs.emplace(&sync.join("meta"), metadata.len(), Cursor::new(metadata)).await?;
+		self.mfs.emplace(self.syncmeta(), metadata.len(), Cursor::new(metadata)).await?;
 
 		for d in delete.iter() {
-			self.mfs.rm_r(&syncdata.join(d)).await?;
+			self.mfs.rm_r(self.syncdata().join(d)).await?;
 		}
 		for a in get.iter() {
-			let pth = &syncdata.join(a);
+			let pth = self.syncdata().join(a);
 			self.mfs.mkdirs(pth.parent().expect("Path to file should have a parent folder")).await?;
 			self.mfs.emplace(pth, meta.files.get(a).map(|i| i.s).flatten().unwrap_or(0), p.get(a)).await?;
 		}
@@ -102,36 +110,34 @@ impl ToMfs {
 		}
 	}
 	async fn finalize_changes(&self) -> Result<()> {
-		let curr = &self.base.join("curr");
-		let sync = &self.base.join("sync");
-		let prev = &self.base.join("prev");
-		let hascurr = self.mfs.exists(curr).await?;
+		let hascurr = self.mfs.exists(self.curr()).await?;
 		if hascurr {
-			self.mfs.mv(curr, prev).await?;
+			if self.mfs.exists(self.prev()).await? {
+				self.mfs.rm_r(self.prev()).await?;
+			}
+			self.mfs.mv(self.curr(), self.prev()).await?;
 		}
-		self.mfs.cp(sync, curr).await?;
-		self.mfs.rm_r(sync).await?;
-		self.mfs.rm_r(&curr.join("pid")).await?;
+		self.mfs.cp(self.sync(), self.curr()).await?;
+		self.mfs.rm_r(self.currpid()).await?;
+		self.mfs.rm_r(self.sync()).await?;
 		if hascurr {
-			self.mfs.rm_r(prev).await?;
+			self.mfs.rm_r(self.prev()).await?;
 		}
 		Ok(())
 	}
 	async fn finalize_unchanged(&self) -> Result<()> {
-		let curr = &self.base.join("curr");
-		let sync = &self.base.join("sync");
-		if !self.mfs.exists(curr).await? {
+		if !self.mfs.exists(self.curr()).await? {
 			// WTF. Empty initial sync
-			self.mfs.mkdir(&curr.join("data")).await?;
+			self.mfs.mkdir(self.currdata()).await?;
 		} else {
-			self.mfs.rm(&curr.join("meta")).await?;
+			self.mfs.rm(self.currmeta()).await?;
 		}
-		self.mfs.cp(&sync.join("meta"), &curr.join("meta")).await?;
-		self.mfs.rm_r(sync).await?;
+		self.mfs.cp(self.syncmeta(), self.currmeta()).await?;
+		self.mfs.rm_r(self.sync()).await?;
 		Ok(())
 	}
 	pub async fn failure_clean_lock(&self) -> Result<()> {
-		self.mfs.rm_r(&self.base.join("sync").join("pid").join(&self.id)).await?;
+		self.mfs.rm_r(self.piddir().join(&self.id)).await?;
 		// Can't remove the dir, as there is no rmdir (that only removes empty dirs)
 		// and rm -r might remove a lockfile that was just created
 		Ok(())

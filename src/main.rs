@@ -60,15 +60,11 @@ async fn main() -> Result<()> {
 }
 
 async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<()> {
-	out.prepare().await
-		.with_context(|| format!("Failed to prepare mfs target folder {}", opts.base))?;
-	let cur = out.get_last_state().await
-		.context("Failed to retrieve state of existing files")
-		.context("TODO: Allow recovering it")?;
+	let current_set = out.prepare().await
+		.with_context(|| format!("Failed to prepare mfs target folder in {} (and read current data state)", opts.base))?;
 
 	let mut ftp_stream = ftp_connect(&opts)
 		.context("Failed to establish FTP connection")?;
-
 	for cwd in &opts.cwd {
 		ftp_stream.cwd(cwd)
 			.with_context(|| format!("Cannot switch to directory {}", cwd))?;
@@ -76,7 +72,7 @@ async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<()> {
 
 	let ups = Recursor::run(&mut ftp_stream)
 		.context("Retrieving file list")?;
-	let sa = SyncActs::new(cur, ups, *opts.reprieve)
+	let sa = SyncActs::new(current_set, ups, *opts.reprieve)
 		.context("Internal error: failed to generate delta")?;
 
 	println!("{:#?}", sa);
