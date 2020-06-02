@@ -3,13 +3,15 @@ use ftp::FtpStream;
 use ftp::types::FileType;
 use std::path::Path;
 use anyhow::{ Result, Context };
-use globset::{ Glob, GlobSetBuilder, GlobSet };
+use ignore::gitignore::{ GitignoreBuilder, Gitignore };
 
 mod tomfs;
 mod mfs;
 mod provider;
 mod fromftp;
 mod nabla;
+#[cfg(test)]
+mod globtest;
 
 use crate::nabla::SyncActs;
 use crate::fromftp::recursor::Recursor;
@@ -74,7 +76,7 @@ async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<()> {
 			.with_context(|| format!("Cannot switch to directory {}", cwd))?;
 	}
 
-	let ignore = globset(&opts.ignore)
+	let ignore = ignore(&opts.ignore)
 		.context("Constructing GlobSet for ignore list")?;
 
 	let ups = Recursor::run(&mut ftp_stream, &ignore)
@@ -97,10 +99,11 @@ fn ftp_connect(opts: &Opts) -> Result<FtpStream> {
 	Ok(ftp_stream)
 }
 
-fn globset<T: AsRef<str>>(base: &[T]) -> Result<GlobSet> {
-	let mut globs = GlobSetBuilder::new();
-	for i in base {
-		globs.add(Glob::new(i.as_ref())?);
+pub(crate) fn ignore<V: AsRef<[T]>, T: AsRef<str>>(base: V) -> Result<Gitignore> {
+	let mut globs = GitignoreBuilder::new("");
+	for (i, ign) in base.as_ref().iter().map(AsRef::as_ref).enumerate() {
+		globs.add_line(None, ign)
+			.with_context(|| format!("Parse ignore index {}: {}", i, ign))?;
 	}
 	return Ok(globs.build()?);
 }

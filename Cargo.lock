@@ -448,9 +448,9 @@ dependencies = [
  "futures 0.3.5",
  "futures-core",
  "futures-util",
- "globset",
  "hostname",
  "humantime",
+ "ignore",
  "ipfs-api",
  "libunftp",
  "nanoid",
@@ -765,6 +765,24 @@ dependencies = [
  "matches",
  "unicode-bidi",
  "unicode-normalization",
+]
+
+[[package]]
+name = "ignore"
+version = "0.4.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22dcbf2a4a289528dbef21686354904e1c694ac642610a9bff9e7df730d9ec72"
+dependencies = [
+ "crossbeam-utils",
+ "globset",
+ "lazy_static",
+ "log",
+ "memchr",
+ "regex",
+ "same-file",
+ "thread_local",
+ "walkdir",
+ "winapi-util",
 ]
 
 [[package]]

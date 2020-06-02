@@ -2,16 +2,16 @@ use crate::nabla::*;
 use ftp::FtpStream;
 use std::path::{ Path, PathBuf };
 use anyhow::{ Result, Context };
-use globset::GlobSet;
+use ignore::gitignore::Gitignore;
 
 pub struct Recursor<'a> {
 	ftp: &'a mut FtpStream,
 	base: PathBuf,
 	result: SyncInfo,
-	ignore: &'a GlobSet,
+	ignore: &'a Gitignore,
 }
 impl <'a> Recursor <'a> {
-	pub fn run(ftp: &'a mut FtpStream, ignore: &'a GlobSet) -> Result<SyncInfo> {
+	pub fn run(ftp: &'a mut FtpStream, ignore: &'a Gitignore) -> Result<SyncInfo> {
 		let wd = ftp.pwd()
 			.context("Failed to retrieve absolute path for base directory")?;
 		let mut r = Recursor {
@@ -33,25 +33,27 @@ impl <'a> Recursor <'a> {
 			let fullname = &pth.clone().join(f);
 			let name = pathdiff::diff_paths(fullname, self.base.clone())
 				.with_context(|| format!("Internal: Can't get path {:?} relative to base {:?}", fullname, self.base))?;
-			if self.ignore.is_match(&name) {
+			let is_dir = self.ftp.cwd(f).is_ok();
+			if self.ignore.matched(&name, is_dir).is_ignore() {
+				if is_dir {
+					self.ftp.cdup()
+						.context("Can't leave FTP directory.")?;
+				}
 				continue;
 			}
-			match self.ftp.cwd(f) {
-				Ok(()) => {
-					self.rec()?;
-					self.ftp.cdup()
-						.context("Can't leave FTP directory. WTF?")?;
-				},
-				Err(_) => {
-					// Appeared in the list but we can't CD to it? Assume it's a file
-					// TODO: permission denied errors
-					self.result.files.insert(name, FileInfo {
-						t: self.ftp.mdtm(&f).with_context(|| format!("Cant get mtime for {:?}", fullname))?,
-						s: self.ftp.size(&f).with_context(|| format!("Cant get size for {:?}", fullname))?,
-						deleted: None,
-					});
-				},
-			}
+			if is_dir {
+				self.rec()?;
+				self.ftp.cdup()
+					.context("Can't leave FTP directory.")?;
+			} else {
+				// Appeared in the list but we can't CD to it? Assume it's a file
+				// TODO: permission denied errors
+				self.result.files.insert(name, FileInfo {
+					t: self.ftp.mdtm(&f).with_context(|| format!("Cant get mtime for {:?}", fullname))?,
+					s: self.ftp.size(&f).with_context(|| format!("Cant get size for {:?}", fullname))?,
+					deleted: None,
+				});
+			};
 		};
 		Ok(())
 	}
@@ -70,7 +72,7 @@ mod test {
 		let mut ftp_stream = FtpStream::connect(addr).unwrap();
 		ftp_stream.login("anonymous", "onymous").unwrap();
 		ftp_stream.transfer_type(ftp::types::FileType::Binary).unwrap();
-		let ups = Recursor::run(&mut memstream(Box::new(abc)).await, &GlobSet::empty()).unwrap();
+		let ups = Recursor::run(&mut memstream(Box::new(abc)).await, &Gitignore::empty()).unwrap();
 
 		assert_eq!(
 			ups.files.iter().map(|(p,_)| p.to_path_buf()).collect::<HashSet<PathBuf>>(),
