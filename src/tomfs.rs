@@ -7,19 +7,31 @@ use std::io::Cursor;
 use anyhow::{ Result, Context, bail, ensure };
 use std::time::SystemTime;
 use std::collections::HashSet;
+use crate::Settings;
 
 pub struct ToMfs {
 	mfs: Mfs,
 	base: PathBuf,
+	/// Attempt ID
 	id: String,
+	settings: Settings,
 }
 
 impl ToMfs {
-	pub fn new(api: &str, base: PathBuf) -> Result<ToMfs> { Ok(ToMfs {
-		mfs: Mfs::new(api)?,
-		base: base,
-		id: nanoid::nanoid!(),
-	})}
+	pub async fn new(api: &str, base: PathBuf) -> Result<ToMfs> {
+		let mfs = Mfs::new(api)?;
+		let id = nanoid::nanoid!();
+		let settings_path = base.join("mirror");
+		let settings = Self::get_settings(&mfs, &settings_path)
+			.await.context(format!("Coult not load settings from {:?}", settings_path))?;
+		Ok(ToMfs { mfs,	base, id, settings })
+	}
+
+	async fn get_settings(mfs: &Mfs, path: &Path) -> Result<Settings> {
+		let bytes: Vec<u8> = mfs.read_fully(path).await?;
+		return Ok(serde_yaml::from_slice(&bytes)
+			.context("Could not parse YAML")?);
+	}
 
 	fn curr(&self)     -> PathBuf { self.base.join("curr") }
 	fn sync(&self)     -> PathBuf { self.base.join("sync") }
@@ -31,6 +43,7 @@ impl ToMfs {
 	fn currpid(&self)  -> PathBuf { self.curr().join("pid") }
 	fn piddir(&self)   -> PathBuf { self.sync().join("pid") }
 	fn lockf(&self)    -> PathBuf { self.piddir().join(&self.id) }
+	pub(crate) fn settings(&self) -> &Settings { &self.settings }
 
 	pub async fn prepare(&self) -> Result<SyncInfo> {
 		self.mfs.rm_r(self.prev()).await.ok();
