@@ -34,8 +34,8 @@ impl ToMfs {
 
 	pub async fn prepare(&self) -> Result<SyncInfo> {
 		self.mfs.rm_r(self.prev()).await.ok();
-		self.mfs.mkdirs(self.sync()).await?;
 		let recovery_required = self.check_existing().await?;
+		self.mfs.mkdirs(self.sync()).await?;
 		if !recovery_required {
 			if self.mfs.exists(self.currdata()).await? {
 				self.mfs.cp(self.currdata(), self.syncdata()).await?;
