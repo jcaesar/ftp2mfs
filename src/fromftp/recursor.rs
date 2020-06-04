@@ -1,7 +1,8 @@
 use crate::nabla::*;
-use ftp::FtpStream;
+use ftp::{ FtpStream, FtpError };
 use std::path::{ Path, PathBuf };
 use anyhow::{ Result, Context };
+use std::result::Result as StdResult;
 use ignore::gitignore::Gitignore;
 
 pub struct Recursor<'a> {
@@ -47,10 +48,26 @@ impl <'a> Recursor <'a> {
 					.context("Can't leave FTP directory.")?;
 			} else {
 				// Appeared in the list but we can't CD to it? Assume it's a file
-				// TODO: permission denied errors
+				let mt = self.ftp.mdtm(&f);
+				let sz = self.ftp.size(&f);
+				fn non_fatal_err<T>(e: &StdResult<T, FtpError>) -> bool {
+					// TODO: Test? If we misinterpret a fatal as a non-fatal,
+					// we may erroneously delete files from the top folder
+					use FtpError::*;
+					match e {
+						Err(SecureError(_)) => true, Err(InvalidResponse(_)) => true,
+						Err(ConnectionError(_)) => false, Err(InvalidAddress(_)) => false,
+						Ok(_) => false,
+					}
+				};
+				if non_fatal_err(&sz) && non_fatal_err(&mt) {
+					// Neither size nor time are available -- assume access denied
+					// TODO: log warning
+					continue;
+				}
 				self.result.files.insert(name, FileInfo {
-					t: self.ftp.mdtm(&f).with_context(|| format!("Cant get mtime for {:?}", fullname))?,
-					s: self.ftp.size(&f).with_context(|| format!("Cant get size for {:?}", fullname))?,
+					t: mt.with_context(|| format!("Cant get mtime for {:?}", fullname))?,
+					s: sz.with_context(|| format!("Cant get size for {:?}", fullname))?,
 					deleted: None,
 				});
 			};
