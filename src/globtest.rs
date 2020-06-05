@@ -32,6 +32,7 @@ fn unignore_subdir() {
     assert!(gs.matched("b", false).is_ignore());
     assert!(gs.matched("b", true).is_ignore());
     assert!(!gs.matched("b/c", false).is_ignore());
+    assert!(gs.matched("b/c/d", false).is_ignore());
 }
 
 #[test]
@@ -40,4 +41,22 @@ fn unignore_subdir_only() {
     assert!(gs.matched("b", false).is_ignore());
     assert!(!gs.matched("b", true).is_ignore());
     assert!(gs.matched("b/c", false).is_ignore());
+}
+
+#[test]
+fn unignore_recursively() {
+    let gs = ignore(vec!["*", "!b/**"]).unwrap();
+    assert!(gs.matched("b", false).is_ignore());
+    assert!(gs.matched("b", true).is_ignore());
+    assert!(!gs.matched("b/c", true).is_ignore());
+    assert!(!gs.matched("b/c", true).is_ignore());
+}
+
+#[test]
+fn ignore_unrecursively() {
+    let gs = ignore(vec!["/*", "!b"]).unwrap();
+    assert!(!gs.matched("b", false).is_ignore());
+    assert!(!gs.matched("b", true).is_ignore());
+    assert!(!gs.matched("b/c", true).is_ignore());
+    assert!(!gs.matched("b/c", true).is_ignore());
 }
