@@ -34,7 +34,7 @@ impl SyncActs {
 		// Calculate adds and make sure no needed folders are deleted
 		let mut gets: HashSet<&Path> = HashSet::new();
 		for (f, i) in ups.files.iter() {
-			if i.deleted.is_some() {
+			if i.deleted.is_some() && cur.files.contains_key(f) {
 				continue;
 			}
 			if !cur.files.get(f).filter(|existing| &i == existing).is_some() {
@@ -190,5 +190,15 @@ mod test {
         let sa = SyncActs::new(old, new, std::time::Duration::from_secs(42)).unwrap();
         assert!(sa.delete.is_empty(), "Don't delete on change {:?}", sa);
         assert_eq!(toset(&sa.get), stoset(&vec!["/a", "/b"]), "Get changed: {:?}", sa);
+    }
+
+    #[test]
+    fn honor_reprieve_on_recovery() {
+        let old = SyncInfo::new();
+        let mut new = threenew();
+        let now = Utc::now();
+        new.files.get_mut(&PathBuf::new().join("/a")).unwrap().deleted = Some(now);
+        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0)).unwrap();
+        assert_eq!(toset(&sa.get), abc(), "A is marked get though the new has deleted set: {:?}", sa);
     }
 }

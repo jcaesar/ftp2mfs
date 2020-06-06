@@ -19,28 +19,43 @@ pub struct ToMfs {
 
 impl ToMfs {
 	pub async fn new(api: &str, base: PathBuf) -> Result<ToMfs> {
+		if !base.is_absolute() {
+			bail!("base path {:?} is not absolute", &base);
+		}
 		let mfs = Mfs::new(api)?;
 		let id = nanoid::nanoid!();
 		let settings_path = base.join("mirror");
 		let settings = Self::get_settings(&mfs, &settings_path)
 			.await.context(format!("Coult not load settings from {:?}", settings_path))?;
+		let workdir = settings.workdir.as_ref().unwrap();
+		if !workdir.is_absolute() {
+			bail!("Work path {:?} is not absolute", &settings.workdir);
+		}
+		if workdir.starts_with(&base) {
+			bail!("Work path {:?} cannot be contained in base path {:?}", &settings.workdir, &base);
+		}
 		Ok(ToMfs { mfs,	base, id, settings })
 	}
 
 	async fn get_settings(mfs: &Mfs, path: &Path) -> Result<Settings> {
 		let bytes: Vec<u8> = mfs.read_fully(path).await?;
-		return Ok(serde_yaml::from_slice(&bytes)
-			.context("Could not parse YAML")?);
+		let mut struc: Settings = serde_yaml::from_slice(&bytes)
+			.context("Could not parse YAML")?;
+		if struc.workdir.is_none() {
+			struc.workdir = Some(Path::new("/temp").join(mfs.stat(path).await?.hash));
+			// TODO: Warn
+		}
+		return Ok(struc);
 	}
 
-	fn curr(&self)     -> PathBuf { self.base.join("curr") }
-	fn sync(&self)     -> PathBuf { self.base.join("sync") }
-	fn prev(&self)     -> PathBuf { self.base.join("prev") }
-	fn currdata(&self) -> PathBuf { self.curr().join("data") }
+	fn workdir(&self)  -> &Path   { &self.settings.workdir.as_ref().unwrap() }
+	fn sync(&self)     -> PathBuf { self.workdir().join("sync") }
+	fn prev(&self)     -> PathBuf { self.workdir().join("prev") }
+	fn currdata(&self) -> PathBuf { self.base.join("data") }
 	fn syncdata(&self) -> PathBuf { self.sync().join("data") }
-	fn currmeta(&self) -> PathBuf { self.curr().join("meta") }
+	fn currmeta(&self) -> PathBuf { self.base.join("state") }
 	fn syncmeta(&self) -> PathBuf { self.sync().join("meta") }
-	fn currpid(&self)  -> PathBuf { self.curr().join("pid") }
+	fn currpid(&self)  -> PathBuf { self.base.join("pid") }
 	fn piddir(&self)   -> PathBuf { self.sync().join("pid") }
 	fn lockf(&self)    -> PathBuf { self.piddir().join(&self.id) }
 	pub(crate) fn settings(&self) -> &Settings { &self.settings }
@@ -202,27 +217,27 @@ impl ToMfs {
 		Ok(())
 	}
 	async fn finalize_changes(&self) -> Result<()> {
-		let hascurr = self.mfs.exists(self.curr()).await?;
-		if hascurr {
-			self.mfs.mv(self.curr(), self.prev()).await?;
+		if self.mfs.exists(self.currmeta()).await? {
+			self.mfs.rm(self.currmeta()).await?
 		}
-		self.mfs.cp(self.sync(), self.curr()).await?;
-		self.mfs.rm_r(self.currpid()).await?;
-		self.mfs.rm_r(self.sync()).await?;
-		if hascurr {
-			self.mfs.rm_r(self.prev()).await?;
+		if self.mfs.exists(self.currdata()).await? {
+			self.mfs.mv(self.currdata(), self.prev()).await?;
 		}
+		self.mfs.cp(self.syncmeta(), self.currmeta()).await?;
+		self.mfs.cp(self.syncdata(), self.currdata()).await?;
+		self.mfs.rm_r(self.workdir()).await?;
 		Ok(())
 	}
 	async fn finalize_unchanged(&self) -> Result<()> {
-		if !self.mfs.exists(self.curr()).await? {
+		if !self.mfs.exists(self.currdata()).await? {
 			// WTF. Empty initial sync
 			self.mfs.mkdir(self.currdata()).await?;
-		} else {
+		}
+		if self.mfs.exists(self.currmeta()).await? {
 			self.mfs.rm(self.currmeta()).await?;
 		}
 		self.mfs.cp(self.syncmeta(), self.currmeta()).await?;
-		self.mfs.rm_r(self.sync()).await?;
+		self.mfs.rm_r(self.workdir()).await?;
 		Ok(())
 	}
 	pub async fn failure_clean_lock(&self) -> Result<()> {

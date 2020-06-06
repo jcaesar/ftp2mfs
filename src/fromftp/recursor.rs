@@ -29,7 +29,7 @@ impl <'a> Recursor <'a> {
 			.context("Cannot get current path")?;
 		let pth = Path::new(pth).to_path_buf();
 		let lst = self.ftp.nlst(None)
-			.with_context(|| format!(""))?;
+			.with_context(|| format!("Cannot list {:?}", pth))?;
 		for ref f in lst {
 			let fullname = &pth.clone().join(f);
 			let name = pathdiff::diff_paths(fullname, self.base.clone())

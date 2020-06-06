@@ -1,7 +1,7 @@
 use clap::Clap;
 use ftp::FtpStream;
 use ftp::types::FileType;
-use std::path::Path;
+use std::path::{ Path, PathBuf };
 use anyhow::{ Result, Context, ensure };
 use ignore::gitignore::{ GitignoreBuilder, Gitignore };
 use url::Url;
@@ -45,12 +45,16 @@ struct Settings {
 	#[serde(with = "serde_humantime", default)]
 	reprieve: Duration,
 	/// Ignore glob patterns when listing files on server (gitignore style)
+	#[serde(default)]
 	ignore: Vec<String>,
 	/// FTP username - mostly just "anonymous"
 	#[serde(default = "const_anonymous")]
 	user: String,
 	/// FTP password - mostly, just an e-mail
 	pass: Option<String>,
+	/// workdir
+	#[serde(default)]
+	workdir: Option<PathBuf>,
 }
 
 fn const_anonymous() -> String { "anonymous".to_owned() }
