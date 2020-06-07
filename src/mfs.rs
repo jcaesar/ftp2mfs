@@ -35,7 +35,6 @@ impl Mfs {
 	pub fn new(api: &str) -> Result<Mfs> { Ok( Mfs {
 		ipfs: ipfs_api::TryFromUri::from_str(api)?,
 	})}
-	#[allow(dead_code)]
 	pub async fn stat<P: AsRef<Path>>(&self, p: P) -> Result<ipfs_api::response::FilesStatResponse> { Ok(
 		self.ipfs.files_stat(p.unpath())
 			.await.with_context(|| format!("mfs: stat {:?}", p.as_ref()))?

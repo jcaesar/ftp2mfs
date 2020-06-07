@@ -9,7 +9,7 @@ use serde::Deserialize;
 use std::time::Duration;
 
 mod tomfs;
-mod mfs;
+pub mod mfs;
 mod provider;
 mod fromftp;
 mod nabla;
@@ -31,7 +31,7 @@ struct Opts {
 	pass: Option<String>,
 	/// IPFS files (mfs) base path
 	#[clap(short, long)]
-	base: String,
+	config: PathBuf,
 	/// IPFS api url
 	#[clap(short, long, default_value = "http://localhost:5001/")]
 	api: String,
@@ -55,6 +55,8 @@ struct Settings {
 	/// workdir
 	#[serde(default)]
 	workdir: Option<PathBuf>,
+	/// datadir
+	target: PathBuf,
 }
 
 fn const_anonymous() -> String { "anonymous".to_owned() }
@@ -63,7 +65,10 @@ fn const_anonymous() -> String { "anonymous".to_owned() }
 async fn main() -> Result<()> {
 	let opts: Opts = Opts::parse();
 
-	let out = ToMfs::new(&opts.api, Path::new(&opts.base).to_path_buf())
+	let settings = get_settings(&opts.config)
+		.context(format!("Loading {:?}", &opts.config))?;
+
+	let out = ToMfs::new(&opts.api, settings)
 		.await.with_context(|| format!("Failed to access mfs on ipfs at {}", opts.api))?;
 	match run_sync(&opts, &out).await {
 		Ok(_) => (),
@@ -82,7 +87,7 @@ async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<()> {
 		"Invalid source url {}: only ftp is supported (Will I support others? Who knows!)", settings.source);
 
 	let current_set = out.prepare().await
-		.with_context(|| format!("Failed to prepare mfs target folder in {} (and read current data state)", opts.base))?;
+		.with_context(|| format!("Failed to prepare mfs target folder in {:?} (and read current data state from {:?})", settings.workdir.as_ref().unwrap(), &settings.target))?;
 
 	let mut ftp_stream = ftp_connect(&opts, &settings)
 		.context("Failed to establish FTP connection")?;
@@ -125,4 +130,21 @@ pub(crate) fn ignore<V: AsRef<[T]>, T: AsRef<str>>(base: V) -> Result<Gitignore>
 			.with_context(|| format!("Parse ignore index {}: {}", i, ign))?;
 	}
 	return Ok(globs.build()?);
+}
+
+fn get_settings(path: &Path) -> Result<(Settings, Vec<u8>)> {
+	let bytes: Vec<u8> = std::fs::read(path)?;
+	let mut struc: Settings = serde_yaml::from_slice(&bytes)
+		.context("Could not parse YAML")?;
+	if struc.workdir.is_none() {
+		let hash = blake3::Hasher::new().update(&bytes).finalize().to_hex();
+		struc.workdir = Some(Path::new("/temp").join(hash.to_string()));
+		// TODO: Warn
+	}
+	ensure!(struc.target.is_absolute(), "target path {:?} is not absolute", &struc.target);
+	let workdir = struc.workdir.as_ref().unwrap();
+	ensure!(workdir.is_absolute(), "work path {:?} is not absolute", &struc.workdir);
+	ensure!(!(workdir.starts_with(&struc.target) || struc.target.starts_with(workdir)),
+		"work path {:?} and target path path {:?} cannot contain one another", &workdir, &struc.target);
+	return Ok((struc, bytes));
 }

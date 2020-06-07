@@ -11,51 +11,30 @@ use crate::Settings;
 
 pub struct ToMfs {
 	mfs: Mfs,
-	base: PathBuf,
 	/// Attempt ID
 	id: String,
 	settings: Settings,
+	settings_orig: Vec<u8>,
 }
 
 impl ToMfs {
-	pub async fn new(api: &str, base: PathBuf) -> Result<ToMfs> {
-		if !base.is_absolute() {
-			bail!("base path {:?} is not absolute", &base);
-		}
+	pub(crate) async fn new(api: &str, settings: (Settings, Vec<u8>)) -> Result<ToMfs> {
 		let mfs = Mfs::new(api)?;
 		let id = nanoid::nanoid!();
-		let settings_path = base.join("mirror");
-		let settings = Self::get_settings(&mfs, &settings_path)
-			.await.context(format!("Coult not load settings from {:?}", settings_path))?;
-		let workdir = settings.workdir.as_ref().unwrap();
-		if !workdir.is_absolute() {
-			bail!("Work path {:?} is not absolute", &settings.workdir);
-		}
-		if workdir.starts_with(&base) {
-			bail!("Work path {:?} cannot be contained in base path {:?}", &settings.workdir, &base);
-		}
-		Ok(ToMfs { mfs,	base, id, settings })
+		let (settings, settings_orig) = settings;
+		Ok(ToMfs { mfs, id, settings, settings_orig })
 	}
 
-	async fn get_settings(mfs: &Mfs, path: &Path) -> Result<Settings> {
-		let bytes: Vec<u8> = mfs.read_fully(path).await?;
-		let mut struc: Settings = serde_yaml::from_slice(&bytes)
-			.context("Could not parse YAML")?;
-		if struc.workdir.is_none() {
-			struc.workdir = Some(Path::new("/temp").join(mfs.stat(path).await?.hash));
-			// TODO: Warn
-		}
-		return Ok(struc);
-	}
 
 	fn workdir(&self)  -> &Path   { &self.settings.workdir.as_ref().unwrap() }
+	fn curr(&self)     -> &Path   { &self.settings.target }
 	fn sync(&self)     -> PathBuf { self.workdir().join("sync") }
 	fn prev(&self)     -> PathBuf { self.workdir().join("prev") }
-	fn currdata(&self) -> PathBuf { self.base.join("data") }
+	fn currdata(&self) -> PathBuf { self.curr().join("data") }
 	fn syncdata(&self) -> PathBuf { self.sync().join("data") }
-	fn currmeta(&self) -> PathBuf { self.base.join("state") }
-	fn syncmeta(&self) -> PathBuf { self.sync().join("meta") }
-	fn currpid(&self)  -> PathBuf { self.base.join("pid") }
+	fn currmeta(&self) -> PathBuf { self.curr().join("state") }
+	fn syncmeta(&self) -> PathBuf { self.sync().join("state") }
+	fn currpid(&self)  -> PathBuf { self.curr().join("pid") }
 	fn piddir(&self)   -> PathBuf { self.sync().join("pid") }
 	fn lockf(&self)    -> PathBuf { self.piddir().join(&self.id) }
 	pub(crate) fn settings(&self) -> &Settings { &self.settings }
@@ -71,6 +50,8 @@ impl ToMfs {
 		}
 		self.lock()
 			.await.with_context(|| format!("Failed to create lock in {:?}", self.sync()))?;
+		self.mfs.emplace(self.sync().join("mirror"), self.settings_orig.len(), Cursor::new(self.settings_orig.clone()))
+			.await.context("Saving mirror settings in mfs")?;
 		if recovery_required {
 			self.recover()
 				.await.context("failed to recover from failed sync")
@@ -206,38 +187,19 @@ impl ToMfs {
 			self.mfs.emplace(pth, meta.files.get(a).map(|i| i.s).flatten().unwrap_or(0), p.get(a)).await?;
 		}
 
-		if delete.is_empty() && get.is_empty() {
-			self.finalize_unchanged()
-				.await.context("No data synced, clean-up failed")?
-		} else {
-			self.finalize_changes()
-				.await.context("Sync finished successfully, but could not be installed as current set")?
-		}
-		self.mfs.flush(&self.base).await?;
+		self.finalize()
+			.await.context("Sync finished successfully, but could not be installed as current set")?;
+		self.mfs.flush(self.curr()).await?;
+		self.mfs.flush(self.workdir().parent().expect("If workdir and target have a disjoint suffix, they must have parents")).await?;
 		Ok(())
 	}
-	async fn finalize_changes(&self) -> Result<()> {
-		if self.mfs.exists(self.currmeta()).await? {
-			self.mfs.rm(self.currmeta()).await?
+	async fn finalize(&self) -> Result<()> {
+		if self.mfs.exists(self.curr()).await? {
+			self.mfs.mv(self.curr(), self.prev()).await?
 		}
-		if self.mfs.exists(self.currdata()).await? {
-			self.mfs.mv(self.currdata(), self.prev()).await?;
-		}
-		self.mfs.cp(self.syncmeta(), self.currmeta()).await?;
-		self.mfs.cp(self.syncdata(), self.currdata()).await?;
+		self.mfs.mv(self.sync(), self.curr()).await?;
 		self.mfs.rm_r(self.workdir()).await?;
-		Ok(())
-	}
-	async fn finalize_unchanged(&self) -> Result<()> {
-		if !self.mfs.exists(self.currdata()).await? {
-			// WTF. Empty initial sync
-			self.mfs.mkdir(self.currdata()).await?;
-		}
-		if self.mfs.exists(self.currmeta()).await? {
-			self.mfs.rm(self.currmeta()).await?;
-		}
-		self.mfs.cp(self.syncmeta(), self.currmeta()).await?;
-		self.mfs.rm_r(self.workdir()).await?;
+		self.mfs.rm_r(self.currpid()).await?;
 		Ok(())
 	}
 	pub async fn failure_clean_lock(&self) -> Result<()> {
