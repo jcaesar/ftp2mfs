@@ -172,12 +172,11 @@ impl ToMfs {
 		Ok(curr)
 	}
 	pub async fn apply(&self, sa: SyncActs, p: &dyn Provider) -> Result<()> {
+		let SyncActs { mut meta, get, delete } = sa;
+		meta.cid = None;
+		self.write_meta(&meta).await?;
+
 		// TODO: desequentialize
-		let SyncActs { meta, get, delete } = sa;
-
-		let metadata = serde_json::to_vec(&meta)?;
-		self.mfs.emplace(self.syncmeta(), metadata.len(), Cursor::new(metadata)).await?;
-
 		for d in delete.iter() {
 			self.mfs.rm_r(self.syncdata().join(d)).await?;
 		}
@@ -186,6 +185,9 @@ impl ToMfs {
 			self.mfs.mkdirs(pth.parent().expect("Path to file should have a parent folder")).await?;
 			self.mfs.emplace(pth, meta.files.get(a).map(|i| i.s).flatten().unwrap_or(0), p.get(a)).await?;
 		}
+
+		meta.cid = Some(self.mfs.stat(self.syncdata()).await?.hash);
+		self.write_meta(&meta).await?;
 
 		self.finalize()
 			.await.context("Sync finished successfully, but could not be installed as current set")?;
@@ -207,6 +209,12 @@ impl ToMfs {
 		self.mfs.rm(self.lockf()).await?;
 		// Can't remove the sync pid dir, as there is no rmdir (that only removes empty dirs)
 		// and rm -r might remove a lockfile that was just created
+		Ok(())
+	}
+
+	pub async fn write_meta(&self, meta: &SyncInfo) -> Result<()> {
+		let metadata = serde_json::to_vec(&meta)?;
+		self.mfs.emplace(self.syncmeta(), metadata.len(), Cursor::new(metadata)).await?;
 		Ok(())
 	}
 }

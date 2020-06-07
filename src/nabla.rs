@@ -14,7 +14,7 @@ pub struct SyncActs {
 impl SyncActs {
 	pub fn new(cur: SyncInfo, mut ups: SyncInfo, reprieve: std::time::Duration) -> Result<SyncActs> {
 		let reprieve = chrono::Duration::from_std(reprieve)
-            .with_context(|| format!("Outlandish reprieve duration specified: {:?}", reprieve))?;
+			.with_context(|| format!("Outlandish reprieve duration specified: {:?}", reprieve))?;
 		// Calculate deleted files (and folders - don't keep empty folders)
 		let mut deletes: HashSet<&Path> = HashSet::new();
 		for (f, i) in cur.files.iter() {
@@ -63,8 +63,9 @@ impl SyncActs {
 pub struct SyncInfo {
 	version: u64,
 	pub files: HashMap<PathBuf, FileInfo>,
-	#[serde(default = "Utc::now")]
 	pub lastsync: DateTime<Utc>,
+	#[serde(skip_serializing_if = "Option::is_none", default)]
+	pub cid: Option<String>,
 }
 
 impl SyncInfo {
@@ -72,6 +73,7 @@ impl SyncInfo {
 		version: 1,
 		files: HashMap::new(),
 		lastsync: Utc::now(),
+		cid: None,
 	}}
 }
 
