@@ -44,7 +44,7 @@ impl ToMfs {
 		let recovery_required = self.check_existing().await?;
 		self.mfs.mkdirs(self.sync()).await?;
 		if !recovery_required {
-			if self.mfs.exists(self.currdata()).await? {
+			if self.mfs.stat(self.currdata()).await?.is_some() {
 				self.mfs.cp(self.currdata(), self.syncdata()).await?;
 			}
 		}
@@ -61,8 +61,8 @@ impl ToMfs {
 		}
 	}
 	async fn check_existing(&self) -> Result<bool> {
-		if self.mfs.exists(self.sync()).await? {
-			if self.mfs.exists(self.piddir()).await? {
+		if self.mfs.stat(self.sync()).await?.is_some() {
+			if self.mfs.stat(self.piddir()).await?.is_some() {
 				let list = self.mfs.ls(self.piddir()).await?;
 				if !list.is_empty() {
 					bail!("pidfiles {:?} exists in {:?}", list, self.piddir()) // TODO: Error message
@@ -98,7 +98,7 @@ impl ToMfs {
 		Ok(())
 	}
 	async fn get_state(&self, p: PathBuf) -> Result<SyncInfo> {
-		match self.mfs.exists(&p).await? {
+		match self.mfs.stat(&p).await?.is_some() {
 			true => {
 				let bytes: Vec<u8> = self.mfs.read_fully(&p).await?;
 				Ok(serde_json::from_slice(&bytes).context("JSON")?)
@@ -114,7 +114,7 @@ impl ToMfs {
 		let sync = self.get_state(self.syncmeta()).await?;
 		let SyncActs { get, delete, .. } = SyncActs::new(curr.clone(), sync.clone(), std::time::Duration::from_secs(0))?;
 		for d in delete.iter() {
-			if !self.mfs.exists(self.syncdata().join(d)).await? {
+			if !self.mfs.stat(self.syncdata().join(d)).await?.is_some() {
 				curr.files.remove(d);
 				// We could also restore it from curr, but we deleted it once because it was gone
 				// from the server. Better keep it deleted locally, too.
@@ -133,9 +133,9 @@ impl ToMfs {
 				(Some(FileInfo { s: None, .. }), _) => ResetSyncToCurrent,
 				(Some(FileInfo { s: Some(currfile_size), .. }), Some(ref newfile_size))
 					if currfile_size == newfile_size => ResetSyncToCurrent, // (the catch)
-				(_, Some(newfile_size)) =>
-					if self.mfs.exists(anew).await? { // TODO: don't stat twice
-						let stat = self.mfs.stat(anew).await?;
+				(_, Some(newfile_size)) => {
+					let stat = self.mfs.stat(anew).await?;
+					if let Some(stat) = stat {
 						match stat.size == newfile_size as u64 {
 							true => AcceptSynced,
 							false => ResetSyncToCurrent
@@ -143,6 +143,7 @@ impl ToMfs {
 					} else {
 						LeaveNonExisting
 					}
+                }
 			};
 			match (resolution, existing.is_some()) {
 				(ResetSyncToCurrent, false) => {
@@ -164,7 +165,7 @@ impl ToMfs {
 		for p in paths_for_deletion.iter() {
 			if p.parent().map(|p| !paths_for_deletion.contains(p)).unwrap_or(false) {
 				let pfs = &self.syncdata().join(p);
-				if self.mfs.exists(pfs).await? {
+				if self.mfs.stat(pfs).await?.is_some() {
 					self.mfs.rm_r(pfs).await?;
 				}
 			}
@@ -186,7 +187,7 @@ impl ToMfs {
 			self.mfs.emplace(pth, meta.files.get(a).map(|i| i.s).flatten().unwrap_or(0), p.get(a)).await?;
 		}
 
-		meta.cid = Some(self.mfs.stat(self.syncdata()).await?.hash);
+		meta.cid = Some(self.mfs.stat(self.syncdata()).await?.context(format!("File {:?} vanished", self.syncdata()))?.hash);
 		self.write_meta(&meta).await?;
 
 		self.finalize()
@@ -196,7 +197,7 @@ impl ToMfs {
 		Ok(())
 	}
 	async fn finalize(&self) -> Result<()> {
-		if self.mfs.exists(self.curr()).await? {
+		if self.mfs.stat(self.curr()).await?.is_some() {
 			self.mfs.mv(self.curr(), self.prev()).await?
 		}
 		self.mfs.mv(self.sync(), self.curr()).await?;

@@ -35,10 +35,6 @@ impl Mfs {
 	pub fn new(api: &str) -> Result<Mfs> { Ok( Mfs {
 		ipfs: ipfs_api::TryFromUri::from_str(api)?,
 	})}
-	pub async fn stat<P: AsRef<Path>>(&self, p: P) -> Result<ipfs_api::response::FilesStatResponse> { Ok(
-		self.ipfs.files_stat(p.unpath())
-			.await.with_context(|| format!("mfs: stat {:?}", p.as_ref()))?
-	)}
 	pub async fn rm_r<P: AsRef<Path>>(&self, p: P) -> Result<()> { Ok(
 		self.ipfs.files_rm(p.unpath(), true)
 			.await.with_context(|| format!("mfs: rm -r {:?}", p.as_ref()))?
@@ -102,10 +98,10 @@ impl Mfs {
 		}
 		Ok(())
 	}
-	pub async fn exists<P: AsRef<Path>>(&self, p: P) -> Result<bool> {
+	pub async fn stat<P: AsRef<Path>>(&self, p: P) -> Result<Option<ipfs_api::response::FilesStatResponse>> {
 		match self.ipfs.files_stat(p.unpath()).await {
-			Ok(_) => return Ok(true),
-			Err(ipfs_api::response::Error::Api(ipfs_api::response::ApiError { code: 0, .. })) => return Ok(false),
+			Ok(r) => return Ok(Some(r)),
+			Err(ipfs_api::response::Error::Api(ipfs_api::response::ApiError { code: 0, .. })) => return Ok(None),
 			e@Err(_) => e.with_context(|| format!("mfs: stat {:?}", p.as_ref()))?,
 		};
 		unreachable!("");
