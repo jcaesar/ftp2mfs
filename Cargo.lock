@@ -485,20 +485,15 @@ dependencies = [
  "anyhow",
  "async-trait",
  "blake3",
- "bytes 0.5.4",
  "chrono 0.4.11",
  "clap",
  "crossbeam-channel",
- "failure",
  "ftp 3.0.1 (git+https://github.com/wnklmnn/rust-ftp.git?rev=0a122e412509a5a4b2990edbcfd926ce485a1e52)",
- "futures 0.3.5",
- "futures-core",
- "futures-util",
  "hostname",
  "humantime 2.0.0",
  "ignore",
- "ipfs-api",
  "libunftp",
+ "mfs",
  "nanoid",
  "pathdiff",
  "serde",
@@ -1028,6 +1023,19 @@ name = "memchr"
 version = "2.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3728d817d99e5ac407411fa471ff9800a778d88a24685968b36824eaf4bee400"
+
+[[package]]
+name = "mfs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes 0.5.4",
+ "failure",
+ "futures 0.3.5",
+ "futures-core",
+ "futures-util",
+ "ipfs-api",
+]
 
 [[package]]
 name = "mime"

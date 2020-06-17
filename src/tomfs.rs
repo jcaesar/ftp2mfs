@@ -1,5 +1,4 @@
 use crate::nabla::SyncActs;
-use crate::mfs::Mfs;
 use std::path::{ PathBuf, Path };
 use crate::provider::Provider;
 use crate::nabla::SyncInfo;
@@ -10,7 +9,7 @@ use std::collections::HashSet;
 use crate::Settings;
 
 pub struct ToMfs {
-	mfs: Mfs,
+	mfs: mfs::Mfs,
 	/// Attempt ID
 	id: String,
 	settings: Settings,
@@ -19,7 +18,7 @@ pub struct ToMfs {
 
 impl ToMfs {
 	pub(crate) async fn new(api: &str, settings: (Settings, Vec<u8>)) -> Result<ToMfs> {
-		let mfs = Mfs::new(api)?;
+		let mfs = mfs::Mfs::new(api)?;
 		let id = nanoid::nanoid!();
 		let (settings, settings_orig) = settings;
 		Ok(ToMfs { mfs, id, settings, settings_orig })

@@ -1,0 +1,20 @@
+[package]
+name = "mfs"
+version = "0.1.0"
+authors = ["Julius Michaelis <gitter@liftm.de>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0"
+bytes = "0.5.4"
+failure = "0.1.8" # ipfs-api leaking "implementation details"… -.-
+futures = "0.3.5" # likewise, from ipfs
+futures-core = "0.3.5"
+futures-util = "0.3.5"
+ipfs-api = "0.7.2"
+
+[lib]
+name = "mfs"
+path = "lib.rs"

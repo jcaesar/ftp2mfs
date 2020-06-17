@@ -9,7 +9,6 @@ use serde::Deserialize;
 use std::time::Duration;
 
 mod tomfs;
-pub mod mfs;
 mod provider;
 mod fromftp;
 mod nabla;
