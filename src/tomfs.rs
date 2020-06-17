@@ -89,9 +89,9 @@ impl ToMfs {
 		self.mfs.emplace(self.lockf(), pid.len(), Cursor::new(pid)).await?;
 		self.mfs.flush(self.piddir()).await?; // Probably unnecessary, but eh.
 		let locks = self.mfs.ls(self.piddir()).await?;
-		ensure!(locks.iter().map(|x| x.name.as_str() ).collect::<Vec<_>>() == vec![&self.id],
+		ensure!(locks == vec![Path::new(&self.id)],
 			"Locking race (Found {}), bailing out",
-			locks.iter().map(|x| x.hash.as_str()).collect::<Vec<_>>().join(", "),
+			locks.iter().map(|l| l.to_string_lossy()).collect::<Vec<_>>().join(", "),
 			// Mutually exclusive. Both may bail. Oh well.
 		);
 		Ok(())

@@ -1,5 +1,5 @@
 use ipfs_api::IpfsClient;
-use std::path::Path;
+use std::path::{ Path, PathBuf };
 use std::io::prelude::*;
 use futures::stream::StreamExt;
 pub use ipfs_api::response::FilesEntry;
@@ -59,10 +59,13 @@ impl Mfs {
 		self.ipfs.files_cp(s.unpath(), d.unpath())
 			.await.with_context(|| format!("mfs: cp {:?} {:?}", s.as_ref(), d.as_ref()))?
 	)}
-	pub async fn ls<P: AsRef<Path>>(&self, p: P) -> Result<Vec<FilesEntry>> { Ok(
+	pub async fn ls<P: AsRef<Path>>(&self, p: P) -> Result<Vec<PathBuf>> { Ok(
 		self.ipfs.files_ls(Some(p.unpath()))
 			.await.with_context(|| format!("mfs: ls {:?}", p.as_ref()))?
 			.entries
+            .into_iter()
+            .map(|e| e.name.into())
+            .collect()
 	)}
 	pub async fn flush<P: AsRef<Path>>(&self, p: P) -> Result<()> { Ok(
 		self.ipfs.files_flush(Some(p.unpath()))
