@@ -38,4 +38,9 @@ blake3 = "0.3"
 libunftp = "0.11.0"
 tokio = { version = "0.2.21", features = ["full", "macros"] }
 async-trait = "0.1.31"
-unmemftp = { git = "https://github.com/jcaesar/unmemftp.git", rev = "adc2c276790864cd0887212c62da81b8ac88c0db" } # = { "path" = "../unmemftp" }
+unmemftp = { "path" = "crates/unmemftp" }
+
+[workspace]
+members = [
+	"crates/unmemftp",
+]
