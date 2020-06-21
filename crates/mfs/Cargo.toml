@@ -7,13 +7,14 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0"
 bytes = "0.5.4"
-failure = "0.1.8" # ipfs-api leaking "implementation details"… -.-
-futures = "0.3.5" # likewise, from ipfs
+failure = "0.1.8"
+futures = "0.3.5"
 futures-core = "0.3.5"
 futures-util = "0.3.5"
-ipfs-api = "0.7.2"
+ipfs-api = "0.7"
+thiserror = "1.0"
+http = ""
 
 [lib]
 name = "mfs"
