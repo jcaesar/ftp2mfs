@@ -14,4 +14,4 @@ tokio = { version = "0.2.21", features = ["full"] }
 async-trait = "0.1.31"
 
 [dev-dependencies]
-ftp = "3.0.1" # Ugh, old datetime…
+async_ftp = "4.0.1"

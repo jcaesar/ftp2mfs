@@ -1,12 +1,12 @@
 use unmemftp::{ MemStorage, MemFile };
-use ftp::FtpStream;
+use async_ftp::FtpStream;
 
 pub(crate) async fn memstream(files: Box<dyn Fn() -> MemStorage + Send + Sync>) -> FtpStream {
     let addr = unmemftp::serve(files).await;
 
-    let mut ftp_stream = FtpStream::connect(addr).unwrap();
-    ftp_stream.login("anonymous", "onymous").unwrap();
-    ftp_stream.transfer_type(ftp::types::FileType::Binary).unwrap();
+    let mut ftp_stream = FtpStream::connect(addr).await.unwrap();
+    ftp_stream.login("anonymous", "onymous").await.unwrap();
+    ftp_stream.transfer_type(async_ftp::types::FileType::Binary).await.unwrap();
     return ftp_stream;
 }
 

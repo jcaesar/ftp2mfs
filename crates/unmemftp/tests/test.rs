@@ -1,7 +1,6 @@
-use ftp::FtpStream;
+use async_ftp::FtpStream;
 use std::result::Result;
 use unmemftp::{ MemStorage, MemFile, serve };
-use std::io::Read;
 
 fn somefiles() -> MemStorage {
 	MemStorage::new(vec![
@@ -17,48 +16,55 @@ mod serve {
 	pub async fn accessdirect() {
 		let addr = serve(Box::new(somefiles)).await;
 
-		let ftp = &mut default_ftp_client(addr);
-		retr_test(ftp, "/a", "A");
+		let ftp = &mut default_ftp_client(addr).await;
+		retr_test(ftp, "/a", "A").await;
 	}
 
 	#[tokio::test(threaded_scheduler)]
 	pub async fn accesspath_no_threaded_scheduler() {
 		let addr = serve(Box::new(somefiles)).await;
 
-		let ftp = &mut default_ftp_client(addr);
-		retr_test(ftp, "/b/c", "BC");
+		let ftp = &mut default_ftp_client(addr).await;
+		retr_test(ftp, "/b/c", "BC").await;
 	}
 
 	#[tokio::test(threaded_scheduler)]
 	pub async fn cd_and_get() {
 		let addr = serve(Box::new(somefiles)).await;
 
-		let ftp = &mut default_ftp_client(addr);
-		ftp.cwd("b").unwrap();
-		retr_test(ftp, "c", "BC");
+		let ftp = &mut default_ftp_client(addr).await;
+		ftp.cwd("b").await.unwrap();
+		retr_test(ftp, "c", "BC").await;
 	}
 	
 	#[tokio::test(threaded_scheduler)]
 	pub async fn cannot_cd_to_nowhere() {
 		let addr = serve(Box::new(somefiles)).await;
 
-		let ftp = &mut default_ftp_client(addr);
-		assert!(ftp.cwd("d").is_err());
+		let ftp = &mut default_ftp_client(addr).await;
+		assert!(ftp.cwd("d").await.is_err());
 	}
 	
 	#[tokio::test(threaded_scheduler)]
 	pub async fn cannot_get_nowhere() {
 		let addr = serve(Box::new(somefiles)).await;
 
-		let ftp = &mut default_ftp_client(addr);
-		assert!(ftp.simple_retr("d").is_err());
+		let ftp = &mut default_ftp_client(addr).await;
+		assert!(ftp.simple_retr("d").await.is_err());
 	}
 
-	fn retr_test(ftp: &mut FtpStream, path: &str, expected: &str) {
-		ftp.retr(path, |r| {
-			assert_eq!(std::str::from_utf8(&r.bytes().collect::<Result<Vec<u8>, _>>().unwrap()).unwrap(), expected);
-			Ok(())
-		}).unwrap();
+	async fn retr_test(ftp: &mut FtpStream, path: &str, expected: &str) {
+        use async_ftp::{DataStream, FtpError};
+        use tokio::io::{AsyncReadExt, BufReader};
+		async fn receive(mut reader: BufReader<DataStream>) -> Result<String, FtpError> {
+            let mut buffer = Vec::new();
+            reader
+                .read_to_end(&mut buffer)
+                .await
+                .map_err(FtpError::ConnectionError)?;
+		    return Ok(std::str::from_utf8(&buffer).unwrap().to_owned());
+        }
+        assert_eq!(ftp.retr(path, receive).await.unwrap(), expected);
 	}
 }
 
@@ -92,7 +98,7 @@ mod acro {
 		tokio::spawn(server.listen(addr));
 		unmemftp::connectable(addr.parse().unwrap()).await;
 
-		default_ftp_client(addr.parse().unwrap());
+		default_ftp_client(addr.parse().unwrap()).await;
 	}
 	
 	#[tokio::test(threaded_scheduler)]
@@ -105,16 +111,16 @@ mod acro {
 		tokio::spawn(server.listen(addr));
 		unmemftp::connectable(addr.parse().unwrap()).await;
 
-		let mut ftp = FtpStream::connect(addr).unwrap();
-		ftp.login("bob", "bob").unwrap();
-		ftp.transfer_type(ftp::types::FileType::Binary).unwrap();
-		assert!(ftp.simple_retr("a").is_ok());
+		let mut ftp = FtpStream::connect(addr).await .unwrap();
+		ftp.login("bob", "bob").await.unwrap();
+		ftp.transfer_type(async_ftp::types::FileType::Binary).await.unwrap();
+		assert!(ftp.simple_retr("a").await.is_ok());
 	}
 }
 	
-fn default_ftp_client(addr: std::net::SocketAddr) -> FtpStream { 
-	let mut ftp = FtpStream::connect(addr).unwrap();
-	ftp.login("anonymous", "onymous").unwrap();
-	ftp.transfer_type(ftp::types::FileType::Binary).unwrap();
+async fn default_ftp_client(addr: std::net::SocketAddr) -> FtpStream {
+	let mut ftp = FtpStream::connect(addr).await.unwrap();
+	ftp.login("anonymous", "onymous").await.unwrap();
+	ftp.transfer_type(async_ftp::types::FileType::Binary).await.unwrap();
 	return ftp;
 }

@@ -1,6 +1,6 @@
 use clap::Clap;
-use ftp::FtpStream;
-use ftp::types::FileType;
+use async_ftp::FtpStream;
+use async_ftp::types::FileType;
 use std::path::{ Path, PathBuf };
 use anyhow::{ Result, Context, ensure };
 use ignore::gitignore::{ GitignoreBuilder, Gitignore };
@@ -60,7 +60,7 @@ struct Settings {
 
 fn const_anonymous() -> String { "anonymous".to_owned() }
 
-#[tokio::main(basic_scheduler)]
+#[tokio::main(threaded_scheduler)]
 async fn main() -> Result<()> {
 	let opts: Opts = Opts::parse();
 
@@ -89,13 +89,13 @@ async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<()> {
 		.with_context(|| format!("Failed to prepare mfs target folder in {:?} (and read current data state from {:?})", settings.workdir.as_ref().unwrap(), &settings.target))?;
 
 	let mut ftp_stream = ftp_connect(&opts, &settings)
-		.context("Failed to establish FTP connection")?;
+		.await.context("Failed to establish FTP connection")?;
 
 	let ignore = ignore(&settings.ignore)
 		.context("Constructing GlobSet for ignore list")?;
 
 	let ups = Recursor::run(&mut ftp_stream, &ignore)
-		.context("Retrieving file list")?;
+		.await.context("Retrieving file list")?;
 	let sa = SyncActs::new(current_set, ups, settings.reprieve)
 		.context("Internal error: failed to generate delta")?;
 
@@ -107,18 +107,18 @@ async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<()> {
 }
 	
 
-fn ftp_connect(opts: &Opts, settings: &Settings) -> Result<FtpStream> {
+async fn ftp_connect(opts: &Opts, settings: &Settings) -> Result<FtpStream> {
 	let host = settings.source.host_str()
 		.context(format!("No host specified in source url {}", settings.source))?;
 	let port = settings.source.port().unwrap_or(21);
-	let mut ftp_stream = FtpStream::connect(format!("{}:{}", host, port))?;
+	let mut ftp_stream = FtpStream::connect(format!("{}:{}", host, port)).await?;
 	let user = opts.user.as_ref().unwrap_or(&settings.user);
 	let pass = opts.pass.as_ref().or(settings.pass.as_ref())
 		.context("No FTP password specified")?;
-	ftp_stream.login(&user, &pass)?;
-	ftp_stream.transfer_type(FileType::Binary)?;
+	ftp_stream.login(&user, &pass).await?;
+	ftp_stream.transfer_type(FileType::Binary).await?;
 	ftp_stream.cwd(settings.source.path())
-		.with_context(|| format!("Cannot switch to directory {}", settings.source.path()))?;
+		.await.with_context(|| format!("Cannot switch to directory {}", settings.source.path()))?;
 	Ok(ftp_stream)
 }
 

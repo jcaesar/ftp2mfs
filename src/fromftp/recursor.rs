@@ -1,9 +1,11 @@
 use crate::nabla::*;
-use ftp::{ FtpStream, FtpError };
+use async_ftp::{ FtpStream, FtpError };
 use std::path::{ Path, PathBuf };
 use anyhow::{ Result, Context };
 use std::result::Result as StdResult;
 use ignore::gitignore::Gitignore;
+use std::future::Future;
+use std::pin::Pin;
 
 pub struct Recursor<'a> {
 	ftp: &'a mut FtpStream,
@@ -12,44 +14,46 @@ pub struct Recursor<'a> {
 	ignore: &'a Gitignore,
 }
 impl <'a> Recursor <'a> {
-	pub fn run(ftp: &'a mut FtpStream, ignore: &'a Gitignore) -> Result<SyncInfo> {
+	pub async fn run(ftp: &'a mut FtpStream, ignore: &'a Gitignore) -> Result<SyncInfo> {
 		let wd = ftp.pwd()
-			.context("Failed to retrieve absolute path for base directory")?;
+			.await.context("Failed to retrieve absolute path for base directory")?;
 		let mut r = Recursor {
 			ftp,
 			base: Path::new(&wd).to_path_buf(),
 			result: SyncInfo::new(), // Marks the sync start time
 			ignore,
 		};
-		r.rec()?;
+		r.rec().await?;
 		Ok(r.result)
 	}
-	fn rec(&mut self) -> Result<()> {
+	fn rec(&mut self)
+        -> Pin<Box<dyn '_ + Future<Output=Result<()>>>>
+    { Box::pin(async move {
 		let pth = &self.ftp.pwd()
-			.context("Cannot get current path")?;
+			.await.context("Cannot get current path")?;
 		let pth = Path::new(pth).to_path_buf();
 		let lst = self.ftp.nlst(None)
-			.with_context(|| format!("Cannot list {:?}", pth))?;
+			.await.with_context(|| format!("Cannot list {:?}", pth))?;
 		for ref f in lst {
 			let fullname = &pth.clone().join(f);
 			let name = pathdiff::diff_paths(fullname, self.base.clone())
 				.with_context(|| format!("Internal: Can't get path {:?} relative to base {:?}", fullname, self.base))?;
-			let is_dir = self.ftp.cwd(f).is_ok();
+			let is_dir = self.ftp.cwd(f).await.is_ok();
 			if self.ignore.matched(&name, is_dir).is_ignore() {
 				if is_dir {
 					self.ftp.cdup()
-						.context("Can't leave FTP directory.")?;
+						.await.context("Can't leave FTP directory.")?;
 				}
 				continue;
 			}
 			if is_dir {
-				self.rec()?;
+				self.rec().await?;
 				self.ftp.cdup()
-					.context("Can't leave FTP directory.")?;
+					.await.context("Can't leave FTP directory.")?;
 			} else {
 				// Appeared in the list but we can't CD to it? Assume it's a file
-				let mt = self.ftp.mdtm(&f);
-				let sz = self.ftp.size(&f);
+				let mt = self.ftp.mdtm(&f).await;
+				let sz = self.ftp.size(&f).await;
 				fn non_fatal_err<T>(e: &StdResult<T, FtpError>) -> bool {
 					// TODO: Test? If we misinterpret a fatal as a non-fatal,
 					// we may erroneously delete files from the top folder
@@ -72,8 +76,8 @@ impl <'a> Recursor <'a> {
 				});
 			};
 		};
-		Ok(())
-	}
+        Ok(())
+	})}
 }
 
 #[cfg(test)]
@@ -86,10 +90,10 @@ mod test {
 	pub async fn main() {
 		let addr = unmemftp::serve(Box::new(abc)).await;
 
-		let mut ftp_stream = FtpStream::connect(addr).unwrap();
-		ftp_stream.login("anonymous", "onymous").unwrap();
-		ftp_stream.transfer_type(ftp::types::FileType::Binary).unwrap();
-		let ups = Recursor::run(&mut memstream(Box::new(abc)).await, &Gitignore::empty()).unwrap();
+		let mut ftp_stream = FtpStream::connect(addr).await.unwrap();
+		ftp_stream.login("anonymous", "onymous").await.unwrap();
+		ftp_stream.transfer_type(async_ftp::types::FileType::Binary).await.unwrap();
+		let ups = Recursor::run(&mut memstream(Box::new(abc)).await, &Gitignore::empty()).await.unwrap();
 
 		assert_eq!(
 			ups.files.iter().map(|(p,_)| p.to_path_buf()).collect::<HashSet<PathBuf>>(),
