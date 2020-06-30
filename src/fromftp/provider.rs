@@ -10,13 +10,15 @@ use futures::stream::StreamExt;
 use futures_util::sink::SinkExt;
 use futures::executor::block_on;
 use anyhow::Context;
+use url::Url;
 
 pub struct FtpProvider {
 	mkreq: UnboundedSender<(PathBuf, Sender<Result<Vec<u8>, std::io::Error>>)>,
+	base: Url,
 }
 impl FtpProvider {
     // All of this may be neater with coprocs/generators. Some day
-	pub fn new(mut ftp: FtpStream) -> FtpProvider {
+	pub fn new(mut ftp: FtpStream, base: Url) -> FtpProvider {
 		let (sender, mut receiver) = unbounded::<(PathBuf, Sender<Result<Vec<u8>, std::io::Error>>)>();
 		tokio::spawn(async move {
 			while let Some((path, mut chan)) = receiver.next().await {
@@ -54,7 +56,7 @@ impl FtpProvider {
 			}
 			ftp.quit().await.ok();
 		});
-		FtpProvider { mkreq: sender } 
+		FtpProvider { mkreq: sender, base }
 	}
 }
 
@@ -62,10 +64,10 @@ impl FtpProvider {
 impl crate::provider::Provider for FtpProvider {
 	fn get(&self, p: &Path) -> Box<dyn Read + Send + Sync> {
 		let (sender, receiver) = bounded(128);
-        println!("prepget: {:?}", p);
 		self.mkreq.unbounded_send((p.to_path_buf(), sender)).expect("FTP client unexpectedly exited");
 		Box::new(ChannelReader { receiver, current: Cursor::new(vec![]) })
 	}
+	fn base(&self) -> &Url { &self.base }
 }
 
 // IterRead won't do, we need to own that channel
@@ -78,8 +80,7 @@ impl Read for ChannelReader {
 		let read = self.current.read(buf)?;
 		if read == 0 {
 			let nextbuf = block_on(self.receiver.next()) // TODO: sucks, but we're not an AsyncRead
-                .context("FTP EoF").map_err(|e| std::io::Error::new(std::io::ErrorKind::UnexpectedEof, e))??;
-            println!("Chan recv {}", nextbuf.len());
+				.context("FTP EoF").map_err(|e| std::io::Error::new(std::io::ErrorKind::UnexpectedEof, e))??;
 			if nextbuf.len() == 0 {
 				return Ok(0);
 			}
@@ -97,9 +98,11 @@ mod test {
 	use super::super::memftp::*;
 	use crate::provider::Provider;
 
+	fn url() -> Url { Url::parse("ftp://example.example/example").unwrap() }
+
 	#[tokio::test(threaded_scheduler)]
 	pub async fn get_a() {
-		let prov = FtpProvider::new(memstream(Box::new(abc)).await);
+		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url());
 		assert_eq!(
 			prov.get(Path::new("a")).bytes().collect::<Result<Vec<u8>, _>>().unwrap(),
 			"Test file 1".as_bytes(),
@@ -108,7 +111,7 @@ mod test {
 
 	#[tokio::test(threaded_scheduler)]
 	pub async fn get_bc() {
-		let prov = FtpProvider::new(memstream(Box::new(abc)).await);
+		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url());
 		assert_eq!(
 			prov.get(Path::new("b/c")).bytes().collect::<Result<Vec<u8>, _>>().unwrap(),
 			"Test file in a subdirectory".as_bytes(),
@@ -117,7 +120,7 @@ mod test {
 
 	#[tokio::test(threaded_scheduler)]
 	pub async fn get_bc_absdir() {
-		let prov = FtpProvider::new(memstream(Box::new(abc)).await);
+		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url());
 		assert_eq!(
 			prov.get(Path::new("/b/c")).bytes().collect::<Result<Vec<u8>, _>>().unwrap(),
 			"Test file in a subdirectory".as_bytes(),
@@ -126,7 +129,7 @@ mod test {
 
 	#[tokio::test(threaded_scheduler)]
 	pub async fn cant_get_d() {
-		let prov = FtpProvider::new(memstream(Box::new(abc)).await);
+		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url());
 		assert!(
 			prov.get(Path::new("/d")).bytes().collect::<Result<Vec<u8>, _>>().is_err()
 		);

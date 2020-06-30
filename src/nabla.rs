@@ -57,6 +57,30 @@ impl SyncActs {
 		let gets = gets.into_iter().map(Path::to_path_buf).collect();
 		Ok(SyncActs { meta: ups, delete: deletes, get: gets })
 	}
+
+	pub fn stats(&self) -> Stats { Stats {
+		final_bytes: self.meta.files.iter()
+			.filter_map(|(_, v)| v.s).sum(),
+		get_bytes: self.get.iter()
+			.filter_map(|p|
+				self.meta.files.get(p)
+					.expect("trying to get a file, but don't know why").s
+			).sum(),
+		reprieve_files: self.meta.files.iter()
+			.filter(|(_, v)| v.deleted.is_some())
+			.count(),
+		reprieve_bytes: self.meta.files.iter()
+			.filter(|(_, v)| v.deleted.is_some())
+			.filter_map(|(_, v)| v.s)
+			.sum(),
+	}}
+}
+
+pub struct Stats {
+	pub get_bytes: usize,
+	pub final_bytes: usize,
+	pub reprieve_files: usize,
+	pub reprieve_bytes: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

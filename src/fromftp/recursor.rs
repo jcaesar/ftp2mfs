@@ -27,8 +27,8 @@ impl <'a> Recursor <'a> {
 		Ok(r.result)
 	}
 	fn rec(&mut self)
-        -> Pin<Box<dyn '_ + Future<Output=Result<()>>>>
-    { Box::pin(async move {
+		-> Pin<Box<dyn '_ + Future<Output=Result<()>>>>
+	{ Box::pin(async move {
 		let pth = &self.ftp.pwd()
 			.await.context("Cannot get current path")?;
 		let pth = Path::new(pth).to_path_buf();
@@ -65,8 +65,9 @@ impl <'a> Recursor <'a> {
 					}
 				};
 				if non_fatal_err(&sz) && non_fatal_err(&mt) {
-					// Neither size nor time are available -- assume access denied
-					// TODO: log warning
+					log::debug!("MDTM {:?}: {:?}", name, mt);
+					log::debug!("SIZE {:?}: {:?}", name, sz);
+					log::warn!("Could not get mtime or size for {:?}, ignoring", name);
 					continue;
 				}
 				self.result.files.insert(name, FileInfo {
@@ -76,7 +77,7 @@ impl <'a> Recursor <'a> {
 				});
 			};
 		};
-        Ok(())
+		Ok(())
 	})}
 }
 

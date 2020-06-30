@@ -7,6 +7,10 @@ use ignore::gitignore::{ GitignoreBuilder, Gitignore };
 use url::Url;
 use serde::Deserialize;
 use std::time::Duration;
+pub fn bytes(b: usize) -> bytesize::ByteSize {
+	use std::convert::TryInto;
+	bytesize::ByteSize::b(b.try_into().expect("outlandish byte count"))
+}
 
 mod tomfs;
 mod provider;
@@ -62,6 +66,8 @@ fn const_anonymous() -> String { "anonymous".to_owned() }
 
 #[tokio::main(threaded_scheduler)]
 async fn main() -> Result<()> {
+	env_logger::init();
+
 	let opts: Opts = Opts::parse();
 
 	let settings = get_settings(&opts.config)
@@ -98,9 +104,25 @@ async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<()> {
 		.await.context("Retrieving file list")?;
 	let sa = SyncActs::new(current_set, ups, settings.reprieve)
 		.context("Internal error: failed to generate delta")?;
+	let stats = sa.stats();
+	let deletestats = match sa.delete.is_empty() {
+		true => "".to_owned(),
+		false => format!(" and delete {} files", sa.delete.len()),
+	};
+	let reprievestats = match stats.reprieve_files {
+		0 => "".to_owned(),
+		_ => format!(", {} in {} files already deleted on server",
+			bytes(stats.reprieve_bytes), stats.reprieve_files
+		),
+	};
+	log::info!("Will get at least {} in {} files{}, final size: {} in {} files{}.",
+		bytes(stats.get_bytes), sa.get.len(),
+		deletestats,
+		bytes(stats.final_bytes), sa.meta.files.len(),
+		reprievestats,
+	);
 
-	println!("{:#?}", sa);
-	out.apply(sa, &FtpProvider::new(ftp_stream)).await
+	out.apply(sa, &FtpProvider::new(ftp_stream, settings.source.clone())).await
 		.context("Sync failure")?;
 
 	Ok(())
@@ -138,7 +160,7 @@ fn get_settings(path: &Path) -> Result<(Settings, Vec<u8>)> {
 	if struc.workdir.is_none() {
 		let hash = blake3::Hasher::new().update(&bytes).finalize().to_hex();
 		struc.workdir = Some(Path::new("/temp").join(hash.to_string()));
-		// TODO: Warn
+		log::warn!("workdir not specified in settings, defaulting to {:?}", struc.workdir.as_ref().unwrap());
 	}
 	ensure!(struc.target.is_absolute(), "target path {:?} is not absolute", &struc.target);
 	let workdir = struc.workdir.as_ref().unwrap();

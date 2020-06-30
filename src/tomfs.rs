@@ -106,6 +106,7 @@ impl ToMfs {
 		}
 	}
 	async fn recover(&self) -> Result<SyncInfo> {
+		log::info!("Recovering from partial sync...");
 		// Use the old metadata as a basis, but overwrite it with the new metadata where it can be
 		// sure that the new metadata is accurate
 		// (one catch: files of same size have to be assumed old)
@@ -120,6 +121,8 @@ impl ToMfs {
 			}
 		}
 		let mut paths_for_deletion: HashSet<&Path> = HashSet::new();
+		let mut recovered_bytes: usize = 0;
+		let mut recovered_files: usize = 0;
 		for a in get.iter() {
 			let anew = &self.syncdata().join(&a);
 			enum State { ResetSyncToCurrent, AcceptSynced, LeaveNonExisting };
@@ -142,7 +145,7 @@ impl ToMfs {
 					} else {
 						LeaveNonExisting
 					}
-                }
+				}
 			};
 			match (resolution, existing.is_some()) {
 				(ResetSyncToCurrent, false) => {
@@ -150,8 +153,16 @@ impl ToMfs {
 						paths_for_deletion.insert(a);
 					}
 				},
-				(ResetSyncToCurrent, true) => { self.mfs.cp(self.currdata().join(&a), anew).await? },
-				(AcceptSynced, _) => { curr.files.insert(a.to_path_buf(), newfile.clone()); },
+				(ResetSyncToCurrent, true) => {
+					log::debug!("Recovery: resetting {:?}", anew);
+					self.mfs.cp(self.currdata().join(&a), anew).await?
+				},
+				(AcceptSynced, _) => {
+					log::debug!("Recovering {:?} -> {:?}", a, newfile);
+					curr.files.insert(a.to_path_buf(), newfile.clone());
+					recovered_bytes += newfile.s.unwrap_or(0);
+					recovered_files += 1;
+				},
 				(LeaveNonExisting, _) => ()
 			};
 		}
@@ -169,6 +180,7 @@ impl ToMfs {
 				}
 			}
 		}
+		log::info!("Recovered {} in {} files.", crate::bytes(recovered_bytes), recovered_files);
 		Ok(curr)
 	}
 	pub async fn apply(&self, sa: SyncActs, p: &dyn Provider) -> Result<()> {
@@ -183,7 +195,7 @@ impl ToMfs {
 		for a in get.iter() {
 			let pth = self.syncdata().join(a);
 			self.mfs.mkdirs(pth.parent().expect("Path to file should have a parent folder")).await?;
-			self.mfs.emplace(pth, meta.files.get(a).map(|i| i.s).flatten().unwrap_or(0), p.get(a)).await?;
+			self.mfs.emplace(pth, meta.files.get(a).map(|i| i.s).flatten().unwrap_or(0), p.log_and_get(a)).await?;
 		}
 
 		meta.cid = Some(self.mfs.stat(self.syncdata()).await?.context(format!("File {:?} vanished", self.syncdata()))?.hash);
