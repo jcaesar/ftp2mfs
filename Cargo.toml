@@ -27,7 +27,7 @@ url_serde = "0.2"
 url = "1"
 serde-humantime = "0.1.1"
 blake3 = "0.3"
-mfs = { path = "crates/mfs" }
+ipfs-mfs = { path = "crates/mfs", version = "0.1" }
 async_ftp = "4.0.1"
 async-trait = "0.1.31"
 bytes = "0.5.5"

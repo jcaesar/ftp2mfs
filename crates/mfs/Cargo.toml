@@ -1,11 +1,12 @@
 [package]
-name = "mfs"
+name = "ipfs-mfs"
 version = "0.1.0"
 authors = ["Julius Michaelis <gitter@liftm.de>"]
 edition = "2018"
 license = "MIT"
 readme = "README"
 keywords = ["ipfs", "mfs"]
+repository = "https://github.com/jcaesar/ftp2mfs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

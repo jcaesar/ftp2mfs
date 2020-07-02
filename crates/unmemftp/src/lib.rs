@@ -132,7 +132,7 @@ impl Metadata for MemMetadata {
 }
 
 #[async_trait::async_trait]
-impl<U: Send + Sync> StorageBackend<U> for MemStorage {
+impl<U: Send + Sync + std::fmt::Debug> StorageBackend<U> for MemStorage {
 	type File = Cursor<Vec<u8>>;
 	type Metadata = MemMetadata;
 

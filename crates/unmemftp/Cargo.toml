@@ -7,6 +7,10 @@ license = "MIT"
 readme = "README.md"
 keywords = ["ftp"]
 categories = ["development-tools::testing"]
+repository = "https://github.com/jcaesar/ftp2mfs"
+description = """
+A quick and somewhat dirty library for testing read-only ftp clients, based on libunftp
+"""
 
 [dependencies]
 libunftp = "0.11.0"
