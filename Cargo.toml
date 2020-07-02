@@ -8,6 +8,7 @@ readme = "README.md"
 repository = "https://github.com/jcaesar/ftp2mfs"
 categories = ["command-line-utilities"]
 keywords = ["ftp", "ipfs", "mfs"]
+description = "Utility for syncing FTP folders into IPFS"
 
 [dependencies]
 clap = "3.0.0-beta.1"
