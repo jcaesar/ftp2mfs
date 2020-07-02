@@ -22,14 +22,15 @@ Note that source folder structures are fully explored before any copying/downloa
 ```yaml
 # The FTP server to copy from
 source: ftp://…
-/// Reprieve period for which files will be kept in MFS after deletion on server
+# Reprieve period for which files will be kept in MFS after deletion on server
 reprieve: "1 month",
-/// Ignore glob patterns when listing files on server (gitignore style)
+# Ignore glob patterns when listing files on server (gitignore style)
 ignore:
   # Example: Whitelist only folders a and b
   - "/*"
   - "!a"
   - "!b"
+  # setting RUST_LOG=debug as environment variable may help with debugging ignore rules
 
 # FTP credentials, defaults to anonymous, can be overwritten from command line
 user: anonymous

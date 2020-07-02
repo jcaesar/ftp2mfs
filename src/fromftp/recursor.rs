@@ -40,6 +40,7 @@ impl <'a> Recursor <'a> {
 				.with_context(|| format!("Internal: Can't get path {:?} relative to base {:?}", fullname, self.base))?;
 			let is_dir = self.ftp.cwd(f).await.is_ok();
 			if self.ignore.matched(&name, is_dir).is_ignore() {
+				log::debug!("Ignoring {:?}", name);
 				if is_dir {
 					self.ftp.cdup()
 						.await.context("Can't leave FTP directory.")?;
@@ -71,8 +72,8 @@ impl <'a> Recursor <'a> {
 					continue;
 				}
 				self.result.files.insert(name, FileInfo {
-					t: mt.with_context(|| format!("Cant get mtime for {:?}", fullname))?,
-					s: sz.with_context(|| format!("Cant get size for {:?}", fullname))?,
+					t: mt.with_context(|| format!("Can't get mtime for {:?}", fullname))?,
+					s: sz.with_context(|| format!("Can't get size for {:?}", fullname))?,
 					deleted: None,
 				});
 			};
