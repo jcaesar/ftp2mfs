@@ -1,6 +1,6 @@
 [package]
 name = "ipfs-mfs"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Julius Michaelis <gitter@liftm.de>"]
 edition = "2018"
 license = "MIT"
@@ -17,7 +17,8 @@ failure = "0.1.8"
 futures = "0.3.5"
 futures-core = "0.3.5"
 futures-util = "0.3.5"
-ipfs-api = "0.7"
+#ipfs-api = { version = "0.8", path = "../../../rust-ipfs-api/ipfs-api" }
+ipfs-api = { version = "0.8",  rev = "71f85fc597dd5c5128c61837f50b75a25a00699f", git = "https://github.com/jcaesar/rust-ipfs-api.git " }
 thiserror = "1.0"
 http = "0.2"
 

@@ -64,7 +64,7 @@ struct Settings {
 
 fn const_anonymous() -> String { "anonymous".to_owned() }
 
-#[tokio::main(threaded_scheduler)]
+#[tokio::main(basic_scheduler)]
 async fn main() -> Result<()> {
 	env_logger::init();
 
@@ -122,7 +122,7 @@ async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<()> {
 		reprievestats,
 	);
 
-	out.apply(sa, &FtpProvider::new(ftp_stream, settings.source.clone())).await
+	out.apply(sa, &FtpProvider::new(ftp_stream, settings.source.clone())?).await
 		.context("Sync failure")?;
 
 	Ok(())

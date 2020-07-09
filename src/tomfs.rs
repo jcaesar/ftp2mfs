@@ -2,7 +2,7 @@ use crate::nabla::SyncActs;
 use std::path::{ PathBuf, Path };
 use crate::provider::Provider;
 use crate::nabla::SyncInfo;
-use std::io::Cursor;
+use futures::io::Cursor;
 use anyhow::{ Result, Context, bail, ensure };
 use std::time::SystemTime;
 use std::collections::HashSet;
@@ -49,7 +49,7 @@ impl ToMfs {
 		}
 		self.lock()
 			.await.with_context(|| format!("Failed to create lock in {:?}", self.sync()))?;
-		self.mfs.emplace(self.sync().join("mirror"), self.settings_orig.len(), Cursor::new(self.settings_orig.clone()))
+		self.mfs.put(self.sync().join("mirror"), Cursor::new(self.settings_orig.clone()))
 			.await.context("Saving mirror settings in mfs")?;
 		if recovery_required {
 			self.recover()
@@ -71,7 +71,7 @@ impl ToMfs {
 			} else {
 				self.mfs.rm_r(self.sync()).await?;
 				// The only reason I can imagine that this would happen is failure between
-				// mkdirs and emplace of the lock in this function.
+				// mkdirs and put of the lock in this function.
 				// All other situations are eerie, so start afresh.
 				Ok(false)
 			}
@@ -86,7 +86,7 @@ impl ToMfs {
 			SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("Bogous clock?").as_secs(),
 		);
 		self.mfs.mkdirs(self.piddir()).await?;
-		self.mfs.emplace(self.lockf(), pid.len(), Cursor::new(pid)).await?;
+		self.mfs.put(self.lockf(), Cursor::new(pid)).await?;
 		self.mfs.flush(self.piddir()).await?; // Probably unnecessary, but eh.
 		let locks = self.mfs.ls(self.piddir()).await?;
 		ensure!(locks == vec![Path::new(&self.id)],
@@ -99,7 +99,7 @@ impl ToMfs {
 	async fn get_state(&self, p: PathBuf) -> Result<SyncInfo> {
 		match self.mfs.stat(&p).await?.is_some() {
 			true => {
-				let bytes: Vec<u8> = self.mfs.read_fully(&p).await?;
+				let bytes: Vec<u8> = self.mfs.get_fully(&p).await?;
 				Ok(serde_json::from_slice(&bytes).context("JSON")?)
 			},
 			false => Ok(SyncInfo::new()),
@@ -155,6 +155,7 @@ impl ToMfs {
 				},
 				(ResetSyncToCurrent, true) => {
 					log::debug!("Recovery: resetting {:?}", anew);
+                    self.mfs.rm_r(anew).await.ok();
 					self.mfs.cp(self.currdata().join(&a), anew).await?
 				},
 				(AcceptSynced, _) => {
@@ -195,7 +196,7 @@ impl ToMfs {
 		for a in get.iter() {
 			let pth = self.syncdata().join(a);
 			self.mfs.mkdirs(pth.parent().expect("Path to file should have a parent folder")).await?;
-			self.mfs.emplace(pth, meta.files.get(a).map(|i| i.s).flatten().unwrap_or(0), p.log_and_get(a)).await?;
+			self.mfs.put(pth, p.log_and_get(a)).await?;
 		}
 
 		meta.cid = Some(self.mfs.stat(self.syncdata()).await?.context(format!("File {:?} vanished", self.syncdata()))?.hash);
@@ -226,7 +227,7 @@ impl ToMfs {
 
 	pub async fn write_meta(&self, meta: &SyncInfo) -> Result<()> {
 		let metadata = serde_json::to_vec(&meta)?;
-		self.mfs.emplace(self.syncmeta(), metadata.len(), Cursor::new(metadata)).await?;
+		self.mfs.put(self.syncmeta(), Cursor::new(metadata)).await?;
 		Ok(())
 	}
 }

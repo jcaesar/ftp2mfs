@@ -1,6 +1,6 @@
 [package]
 name = "ftp2mfs"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Julius Michaelis <gitter@liftm.de>"]
 edition = "2018"
 license = "MIT"
@@ -28,7 +28,7 @@ url_serde = "0.2"
 url = "1"
 serde-humantime = "0.1.1"
 blake3 = "0.3"
-ipfs-mfs = { path = "crates/mfs", version = "0.1" }
+ipfs-mfs = { path = "crates/mfs", version = "0.2" }
 async_ftp = "4.0.1"
 async-trait = "0.1.31"
 bytes = "0.5.5"
@@ -38,6 +38,7 @@ futures-util = "0.3.5"
 log = "0.4.0"
 env_logger = "0.7.1"
 bytesize = "1.0.1"
+futures-core = "0.3.5"
 
 [dev-dependencies]
 libunftp = "0.11.0"

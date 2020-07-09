@@ -8,9 +8,11 @@ use futures_channel::mpsc::channel as bounded;
 use futures_channel::mpsc::{ unbounded, UnboundedSender };
 use futures::stream::StreamExt;
 use futures_util::sink::SinkExt;
-use futures::executor::block_on;
-use anyhow::Context;
+use futures::AsyncRead;
+use anyhow::Context as _;
 use url::Url;
+use std::task::{ Poll, Context };
+use std::pin::Pin;
 
 pub struct FtpProvider {
 	mkreq: UnboundedSender<(PathBuf, Sender<Result<Vec<u8>, std::io::Error>>)>,
@@ -18,51 +20,63 @@ pub struct FtpProvider {
 }
 impl FtpProvider {
     // All of this may be neater with coprocs/generators. Some day
-	pub fn new(mut ftp: FtpStream, base: Url) -> FtpProvider {
+	pub fn new(mut ftp: FtpStream, base: Url) -> Result<FtpProvider, anyhow::Error> {
 		let (sender, mut receiver) = unbounded::<(PathBuf, Sender<Result<Vec<u8>, std::io::Error>>)>();
-		tokio::spawn(async move {
-			while let Some((path, mut chan)) = receiver.next().await {
-				let retr = ftp.retr(path.to_str().unwrap(), |mut r: BufReader<DataStream>| {
+        log::debug!("Starting FTP file provider");
+        tokio::spawn(async move {
+            log::debug!("FTP file provider started");
+            while let Some((path, mut chan)) = receiver.next().await {
+                log::debug!("FTP file provider reqesting {:?}", path);
+                let retr = ftp.retr(path.to_str().unwrap(), |mut r: BufReader<DataStream>| {
                     let mut chan = chan.clone();
                     async move {
-                        let mut bufsize = 1<<16;
+                        log::debug!("FTP file provider receiving");
+                        let mut bufsize = 1 << 16;
                         loop {
                             let mut buf = Vec::new();
                             buf.resize(bufsize, 0);
                             match tokio::io::AsyncReadExt::read(&mut r, &mut buf).await {
                                 Ok(n) => {
+                                    log::trace!("Receiving: {} / {}", n, bufsize);
                                     buf.truncate(n);
-                                    if !chan.send(Ok(buf)).await.is_ok() {
+                                    if let Err(e) = chan.send(Ok(buf)).await {
+                                        log::warn!("Receiving: write pipe broke: {:?}", e);
                                         break;
                                     }
                                     if n == 0 {
+                                        log::trace!("Receiving: finished with 0 block");
                                         break;
                                     }
-                                    bufsize = std::cmp::max(n * 9 / 8, 4096);
+                                    bufsize = std::cmp::min(std::cmp::max(1 << 16, n * 9 / 8), 1 << 23);
                                 },
-                                Err(e) => match e.kind() {
+                                Err(e) =>{
+                                    log::debug!("Receiving: Error {:?}", e);
+                                    match e.kind() {
                                         std::io::ErrorKind::Interrupted => continue,
-                                        _ => { chan.send(Err(e)).await.ok(); break }
+                                        _ => { return Err(async_ftp::FtpError::ConnectionError(e)); }
+                                    }
                                 }
                             }
-
                         }
                         Ok(())
                     }
                 }).await;
 				if let Err(e) = retr {
+                    log::warn!("Retrieving {:?} failed: {:?}", path, e);
 					chan.send(Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, e))).await.ok();
-				}
+				} else {
+                    log::debug!("Retrieving {:?} succeeded", path);
+                }
 			}
 			ftp.quit().await.ok();
 		});
-		FtpProvider { mkreq: sender, base }
+		Ok(FtpProvider { mkreq: sender, base })
 	}
 }
 
 #[async_trait::async_trait]
 impl crate::provider::Provider for FtpProvider {
-	fn get(&self, p: &Path) -> Box<dyn Read + Send + Sync> {
+	fn get(&self, p: &Path) -> Box<dyn AsyncRead + Send + Sync + Unpin> {
 		let (sender, receiver) = bounded(128);
 		self.mkreq.unbounded_send((p.to_path_buf(), sender)).expect("FTP client unexpectedly exited");
 		Box::new(ChannelReader { receiver, current: Cursor::new(vec![]) })
@@ -75,19 +89,27 @@ struct ChannelReader {
 	receiver: Receiver<Result<Vec<u8>, std::io::Error>>,
 	current: Cursor<Vec<u8>>,
 }
-impl Read for ChannelReader {
-	fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
-		let read = self.current.read(buf)?;
+impl AsyncRead for ChannelReader {
+	fn poll_read(self: Pin<&mut Self>, ctx: &mut Context<'_>, buf: &mut [u8]) -> Poll<Result<usize, std::io::Error>> {
+		let selb = self.get_mut();
+		let read = selb.current.read(buf)?;
 		if read == 0 {
-			let nextbuf = block_on(self.receiver.next()) // TODO: sucks, but we're not an AsyncRead
-				.context("FTP EoF").map_err(|e| std::io::Error::new(std::io::ErrorKind::UnexpectedEof, e))??;
-			if nextbuf.len() == 0 {
-				return Ok(0);
-			}
-			std::mem::swap(&mut self.current, &mut Cursor::new(nextbuf));
-			return self.current.read(buf);
+			match futures_core::stream::Stream::poll_next(Pin::new(&mut selb.receiver), ctx) {
+				Poll::Pending => return Poll::Pending,
+				Poll::Ready(Some(Ok(v))) if v.len() == 0 => {
+                    log::trace!("Finished read");
+                    return Poll::Ready(Ok(0));
+                },
+				Poll::Ready(next) => {
+					let next = next.context("void EoF").map_err(
+						|e| std::io::Error::new(std::io::ErrorKind::UnexpectedEof, e)
+					)??;
+					std::mem::swap(&mut selb.current, &mut Cursor::new(next));
+				}
+			};
+			return Poll::Ready(selb.current.read(buf));
 		} else {
-			Ok(read)
+			Poll::Ready(Ok(read))
 		}
 	}
 }

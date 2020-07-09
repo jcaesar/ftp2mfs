@@ -475,7 +475,7 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
 name = "ftp2mfs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -489,6 +489,7 @@ dependencies = [
  "env_logger",
  "futures 0.3.5",
  "futures-channel",
+ "futures-core",
  "futures-util",
  "hostname",
  "humantime 2.0.0",
@@ -885,9 +886,8 @@ dependencies = [
 
 [[package]]
 name = "ipfs-api"
-version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9e7fbfe5c8cb04c27fe20bf2624354f4d102652fd465a297a924c24e60aba4a"
+version = "0.8.0"
+source = "git+https://github.com/jcaesar/rust-ipfs-api.git?rev=71f85fc597dd5c5128c61837f50b75a25a00699f#71f85fc597dd5c5128c61837f50b75a25a00699f"
 dependencies = [
  "bytes 0.5.5",
  "dirs",
@@ -908,7 +908,7 @@ dependencies = [
 
 [[package]]
 name = "ipfs-mfs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytes 0.5.5",
  "failure",
