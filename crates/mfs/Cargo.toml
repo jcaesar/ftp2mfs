@@ -7,6 +7,7 @@ license = "MIT"
 readme = "README"
 keywords = ["ipfs", "mfs"]
 repository = "https://github.com/jcaesar/ftp2mfs"
+documentation = "https://docs.rs/ipfs-mfs/"
 description = "A slightly more ergonomic wrapper for ipfs-api's mfs-related functions"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -21,6 +22,11 @@ futures-util = "0.3.5"
 ipfs-api = { version = "0.8",  rev = "71f85fc597dd5c5128c61837f50b75a25a00699f", git = "https://github.com/jcaesar/rust-ipfs-api.git " }
 thiserror = "1.0"
 http = "0.2"
+
+[dev-dependencies]
+anyhow = "1.0"
+tokio = { version = "0.2.21", features = ["full", "macros"] }
+rand = "0.7.3"
 
 [lib]
 name = "mfs"

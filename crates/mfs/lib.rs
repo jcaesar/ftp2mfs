@@ -155,7 +155,7 @@ impl Mfs {
 				finished = read == 0;
 			}
 			buf.truncate(offset);
-			if finished && !firstwrite {
+			if offset == 0 && !firstwrite {
 				break;
 			}
 			let req = self.ipfs.files_write(d,
@@ -189,5 +189,45 @@ impl Mfs {
 			e@Err(_) => e.with_context(|| format!("stat {:?}", p.as_ref()))?,
 		};
 		unreachable!("");
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[tokio::test]
+	async fn eierlegendewollmilchsau() {
+		let mfs = Mfs::new("http://127.0.0.1:5001").expect("create client");
+		let basedir = Path::new("/test-rust-ipfs-mfs");
+		if mfs.stat(basedir).await.expect("Test preparation: check existing files at test path").is_some() {
+			mfs.rm_r(basedir).await.expect("Test preparation: remove already existing test files");
+		}
+		mfs.mkdir(basedir).await.expect("Test preparation: make working directory");
+
+		mfs.mkdir(basedir.join("a/b")).await.err().expect("mkdir does not create parents");
+		mfs.mkdirs(basedir.join("a/b")).await.expect("mkdirs creates parents");
+		let stat1 = mfs.stat(basedir)
+			.await.expect("Statting working directory").expect("Working directory exists");
+		mfs.cp(basedir, basedir.join("a/c")).await.expect("cp succeeds");
+		assert_eq!(mfs.stat(basedir.join("a/c")).await.unwrap().unwrap().hash, stat1.hash,
+			"After cp is before cp (the hash)");
+		mfs.mv(basedir.join("a/b"), basedir.join("a/d")).await.expect("mv succeeds");
+		let mut ls1 = mfs.ls(basedir.join("a")).await.expect("Listing a");
+		ls1.sort();
+		assert_eq!(vec![PathBuf::from("c"), PathBuf::from("d")], ls1,
+			"Directory listing matches expected");
+
+		for size in vec![0 as usize, 1, 10, 8 << 20, 9 * 1 << 20] {
+			let f = &basedir.join("f");
+			let data = (0..size).map(|_| rand::random::<u8>()).collect::<Vec<_>>();
+			mfs.put(f, futures::io::Cursor::new(data.clone()))
+				.await.expect(&format!("Write file of size {}", size));
+			let redata = mfs.get_fully(f).await.expect("Read file");
+			assert_eq!(data.len(), redata.len(), "Read size matches written size");
+			assert_eq!(data, redata, "Read matches written");
+		}
+
+		mfs.rm_r(basedir).await.expect("cleanup");
 	}
 }

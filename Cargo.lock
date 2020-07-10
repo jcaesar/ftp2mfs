@@ -910,6 +910,7 @@ dependencies = [
 name = "ipfs-mfs"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "bytes 0.5.5",
  "failure",
  "futures 0.3.5",
@@ -917,7 +918,9 @@ dependencies = [
  "futures-util",
  "http",
  "ipfs-api",
+ "rand 0.7.3",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
