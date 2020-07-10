@@ -1,3 +1,18 @@
+//! Small wrapper crate for `ipfs_api`.
+//! Mostly exists because I do not want any part of the `failure` crate to appear in my code.
+//!
+//! Quick example:
+//! ```no_run
+//! # use mfs::Mfs;
+//! # use std::path::Path;
+//! # async {
+//! let mfs = Mfs::new("http://127.0.0.1:5001").unwrap();
+//! mfs.put(Path::new("/demo"), futures::io::Cursor::new("Hello ipfs files")).await.ok();
+//! # };
+//! ```
+//!
+//! The relevant functions are exposted through the main `Mfs` struct.
+
 use ipfs_api::IpfsClient;
 use std::path::{ Path, PathBuf };
 use futures::stream::StreamExt;
@@ -73,11 +88,19 @@ impl<T> Unpath for T where T: AsRef<Path> {
 	fn unpath(&self) -> &str { self.as_ref().to_str().unwrap() }
 }
 
+
+/// The main struct
+///
+/// All of its functions will panic if the passed paths are not valid unicode.
 pub struct Mfs {
 	ipfs: IpfsClient,
+	/// Whether to ask ipfs to flush the operation. Defaults to `true`.
 	pub flush_default: bool,
+	/// Default hash function to use for write / create operations.
 	pub hash_default: Option<String>,
+	/// Default cid version to request on write / create operations. Defaults to `1`.
 	pub cid_default: i32,
+	/// Whether to write files with `raw-leaves`
 	pub raw_leaves_default: bool,
 }
 impl Mfs {
@@ -88,30 +111,45 @@ impl Mfs {
 		cid_default: 1,
 		raw_leaves_default: true,
 	})}
+
+	/// Remove file or folder (possibly non-empty)
 	pub async fn rm_r<P: AsRef<Path>>(&self, p: P) -> MfsResult<()> { Ok(
 		self.ipfs.files_rm(p.unpath(), true, self.flush_default)
 			.await.with_context(|| format!("rm -r {:?}", p.as_ref()))?
 	)}
+
+	/// Remove file
 	pub async fn rm<P: AsRef<Path>>(&self, p: P) -> MfsResult<()> { Ok(
 		self.ipfs.files_rm(p.unpath(), false, self.flush_default)
 			.await.with_context(|| format!("rm {:?}", p.as_ref()))?
 	)}
+
+	/// Create directory `p` and parents as needed.
 	pub async fn mkdirs<P: AsRef<Path>>(&self, p: P) -> MfsResult<()> { Ok(
 		self.ipfs.files_mkdir(p.unpath(), true, self.cid_default, self.hash_default.as_deref(), self.flush_default)
 			.await.with_context(|| format!("mkdir -p {:?}", p.as_ref()))?
 	)}
+
+	/// Create directory `p`. Requires that its parent already exist.
 	pub async fn mkdir<P: AsRef<Path>>(&self, p: P) -> MfsResult<()> { Ok(
 		self.ipfs.files_mkdir(p.unpath(), false, self.cid_default, self.hash_default.as_deref(), self.flush_default)
 			.await.with_context(|| format!("mkdir -p {:?}", p.as_ref()))?
 	)}
+
+	/// Rename / move `s` to `d`.
+	///
 	pub async fn mv<PS: AsRef<Path>, PD: AsRef<Path>>(&self, s: PS, d: PD) -> MfsResult<()> { Ok(
 		self.ipfs.files_mv(s.unpath(), d.unpath(), self.flush_default)
 			.await.with_context(|| format!("mv {:?} {:?}", s.as_ref(), d.as_ref()))?
 	)}
+
+	/// Copy path `s` to path `d`. Beware of `s` starting with `/ipfs` or `/ipns`.
 	pub async fn cp<PS: AsRef<Path>, PD: AsRef<Path>>(&self, s: PS, d: PD) -> MfsResult<()> { Ok(
 		self.ipfs.files_cp(s.unpath(), d.unpath(), self.flush_default)
 			.await.with_context(|| format!("cp {:?} {:?}", s.as_ref(), d.as_ref()))?
 	)}
+
+	/// List files in folder
 	pub async fn ls<P: AsRef<Path>>(&self, p: P) -> MfsResult<Vec<PathBuf>> { Ok(
 		self.ipfs.files_ls(Some(p.unpath()), false)
 			.await.with_context(|| format!("ls {:?}", p.as_ref()))?
@@ -120,14 +158,19 @@ impl Mfs {
 			.map(|e| e.name.into())
 			.collect()
 	)}
+
+	/// Flush folder
 	pub async fn flush<P: AsRef<Path>>(&self, p: P) -> MfsResult<()> { Ok(
 		self.ipfs.files_flush(Some(p.unpath()))
 			.await.with_context(|| format!("flush {:?}", p.as_ref()))?
 	)}
+
+	/// Read file at `s`.
 	pub fn get<'a, P: AsRef<Path>>(&self, s: P) -> impl futures_core::stream::Stream<Item = MfsResult<bytes::Bytes>> {
 		self.ipfs.files_read(s.unpath(), 0, None).map(move |e| Ok(e.with_context(|| format!("reading {:?}", s.as_ref()))?))
 	}
 
+	/// Read file at `s` into in-memory buffer.
 	pub async fn get_fully<P: AsRef<Path>>(&self, s: P) -> MfsResult<Vec<u8>> {
 		use futures_util::stream::TryStreamExt;
 		self.get(s)
@@ -136,6 +179,10 @@ impl Mfs {
 			.await
 		// Optimally, I'd have a version of this that returns a Read or similar…
 	}
+	/// Write file to `d`.
+	///
+	/// Internally buffers chunks of 8 MiB and writes them with separate calls to IPFS
+	/// due to limitations of `multipart`.
 	pub async fn put<P: AsRef<Path>, R: 'static + futures::AsyncRead + Send + Sync + Unpin>(&self, d: P, mut data: R)
 		-> MfsResult<()>
 	{
@@ -182,6 +229,7 @@ impl Mfs {
 		}
 		Ok(())
 	}
+	/// Request hash, type, sizes, and block count of `p`. Returns `None` if the file does not exist
 	pub async fn stat<P: AsRef<Path>>(&self, p: P) -> MfsResult<Option<FilesStatResponse>> {
 		match self.ipfs.files_stat(p.unpath(), false).await {
 			Ok(r) => return Ok(Some(r)),
