@@ -119,41 +119,38 @@ mod test {
 	use super::*;
 	use super::super::memftp::*;
 	use crate::provider::Provider;
+	use futures::io::AsyncReadExt;
 
 	fn url() -> Url { Url::parse("ftp://example.example/example").unwrap() }
 
 	#[tokio::test(threaded_scheduler)]
 	pub async fn get_a() {
 		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url()).unwrap();
-		assert_eq!(
-			prov.get(Path::new("a")).bytes().collect::<Result<Vec<u8>, _>>().unwrap(),
-			"Test file 1".as_bytes(),
-		);
+		let content = &mut String::new();
+		prov.get(Path::new("a")).read_to_string(content).await.unwrap();
+		assert_eq!(content, "Test file 1");
 	}
 
 	#[tokio::test(threaded_scheduler)]
 	pub async fn get_bc() {
 		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url()).unwrap();
-		assert_eq!(
-			prov.get(Path::new("b/c")).bytes().collect::<Result<Vec<u8>, _>>().unwrap(),
-			"Test file in a subdirectory".as_bytes(),
-		);
+		let content = &mut String::new();
+		prov.get(Path::new("b/c")).read_to_string(content).await.unwrap();
+		assert_eq!(content, "Test file in a subdirectory");
 	}
 
 	#[tokio::test(threaded_scheduler)]
 	pub async fn get_bc_absdir() {
 		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url()).unwrap();
-		assert_eq!(
-			prov.get(Path::new("/b/c")).bytes().collect::<Result<Vec<u8>, _>>().unwrap(),
-			"Test file in a subdirectory".as_bytes(),
-		);
+		let content = &mut String::new();
+		prov.get(Path::new("/b/c")).read_to_string(content).await.unwrap();
+		assert_eq!(content, "Test file in a subdirectory");
 	}
 
 	#[tokio::test(threaded_scheduler)]
 	pub async fn cant_get_d() {
 		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url()).unwrap();
-		assert!(
-			prov.get(Path::new("/d")).bytes().collect::<Result<Vec<u8>, _>>().is_err()
-		);
+		let dummy = &mut String::new();
+		assert!(prov.get(Path::new("/d")).read_to_string(dummy).await.is_err());
 	}
 }

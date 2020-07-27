@@ -219,8 +219,8 @@ impl Mfs {
 				.create(firstwrite)
 				.truncate(firstwrite)
 				.parents(true)
-				.offset(offset as i64)
-				.count(total as i64)
+				.offset(total as i64)
+				.count(offset as i64)
 				.raw_leaves(self.raw_leaves_default)
 				.cid_version(self.cid_default)
 				.hash(&self.hash_default)
@@ -283,7 +283,7 @@ mod tests {
 		assert_eq!(vec![PathBuf::from("c"), PathBuf::from("d")], ls1,
 			"Directory listing matches expected");
 
-		for size in vec![0 as usize, 1, 10, 8 << 20, 9 * 1 << 20] {
+		for size in vec![0 as usize, 10, 1, 8 << 20, 9 << 20] {
 			let f = &basedir.join("f");
 			let data = (0..size).map(|_| rand::random::<u8>()).collect::<Vec<_>>();
 			mfs.put(f, futures::io::Cursor::new(data.clone()))
