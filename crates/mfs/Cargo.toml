@@ -18,8 +18,7 @@ failure = "0.1.8"
 futures = "0.3.5"
 futures-core = "0.3.5"
 futures-util = "0.3.5"
-#ipfs-api = { version = "0.8", path = "../../../rust-ipfs-api/ipfs-api" }
-ipfs-api = { version = "0.8",  rev = "71f85fc597dd5c5128c61837f50b75a25a00699f", git = "https://github.com/jcaesar/rust-ipfs-api.git " }
+ipfs-api = { version = "0.8.0-rc", features = ["builder"] }
 thiserror = "1.0"
 http = "0.2"
 

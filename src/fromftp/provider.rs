@@ -124,7 +124,7 @@ mod test {
 
 	#[tokio::test(threaded_scheduler)]
 	pub async fn get_a() {
-		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url());
+		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url()).unwrap();
 		assert_eq!(
 			prov.get(Path::new("a")).bytes().collect::<Result<Vec<u8>, _>>().unwrap(),
 			"Test file 1".as_bytes(),
@@ -133,7 +133,7 @@ mod test {
 
 	#[tokio::test(threaded_scheduler)]
 	pub async fn get_bc() {
-		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url());
+		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url()).unwrap();
 		assert_eq!(
 			prov.get(Path::new("b/c")).bytes().collect::<Result<Vec<u8>, _>>().unwrap(),
 			"Test file in a subdirectory".as_bytes(),
@@ -142,7 +142,7 @@ mod test {
 
 	#[tokio::test(threaded_scheduler)]
 	pub async fn get_bc_absdir() {
-		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url());
+		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url()).unwrap();
 		assert_eq!(
 			prov.get(Path::new("/b/c")).bytes().collect::<Result<Vec<u8>, _>>().unwrap(),
 			"Test file in a subdirectory".as_bytes(),
@@ -151,7 +151,7 @@ mod test {
 
 	#[tokio::test(threaded_scheduler)]
 	pub async fn cant_get_d() {
-		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url());
+		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url()).unwrap();
 		assert!(
 			prov.get(Path::new("/d")).bytes().collect::<Result<Vec<u8>, _>>().is_err()
 		);
