@@ -86,10 +86,25 @@ pub struct Stats {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SyncInfo {
 	version: u64,
+	#[serde(serialize_with = "ordered_map")]
 	pub files: HashMap<PathBuf, FileInfo>,
 	pub lastsync: DateTime<Utc>,
 	#[serde(skip_serializing_if = "Option::is_none", default)]
 	pub cid: Option<String>,
+}
+
+fn ordered_map<S, V>(value: &HashMap<PathBuf, V>, serializer: S) -> Result<S::Ok, S::Error>
+where
+	S: serde::Serializer, V: Serialize,
+{
+	let mut value: Vec<(&PathBuf, &V)> = value.iter().collect();
+	value.sort_by(|(k1, _), (k2, _)| human_sort::compare(&k1.to_string_lossy(), &k2.to_string_lossy()));
+	use serde::ser::SerializeMap;
+	let mut map = serializer.serialize_map(Some(value.len()))?;
+	for (k, v) in value.iter() {
+		map.serialize_entry(k, v)?;
+	}
+	map.end()
 }
 
 impl SyncInfo {
