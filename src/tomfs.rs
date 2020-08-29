@@ -1,4 +1,5 @@
 use crate::nabla::SyncActs;
+use chrono::prelude::*;
 use std::path::{ PathBuf, Path };
 use crate::provider::Provider;
 use crate::nabla::SyncInfo;
@@ -33,6 +34,7 @@ impl ToMfs {
 	fn syncdata(&self) -> PathBuf { self.sync().join("data") }
 	fn currmeta(&self) -> PathBuf { self.curr().join("state") }
 	fn syncmeta(&self) -> PathBuf { self.sync().join("state") }
+	fn lastsync(&self) -> PathBuf { self.sync().join("lastsync") }
 	fn currpid(&self)  -> PathBuf { self.curr().join("pid") }
 	fn piddir(&self)   -> PathBuf { self.sync().join("pid") }
 	fn lockf(&self)    -> PathBuf { self.piddir().join(&self.id) }
@@ -184,10 +186,11 @@ impl ToMfs {
 		log::info!("Recovered {} in {} files.", crate::bytes(recovered_bytes), recovered_files);
 		Ok(curr)
 	}
-	pub async fn apply(&self, sa: SyncActs, p: &dyn Provider) -> Result<()> {
+	pub async fn apply(&self, sa: SyncActs, p: &dyn Provider, sync_start: &DateTime<Utc>) -> Result<()> {
 		let SyncActs { mut meta, get, delete } = sa;
 		meta.cid = None;
 		self.write_meta(&meta).await?;
+        self.mfs.put(self.lastsync(), Cursor::new(sync_start.to_rfc3339().into_bytes())).await?;
 
 		// TODO: desequentialize
 		for d in delete.iter() {
@@ -218,6 +221,7 @@ impl ToMfs {
 		Ok(())
 	}
 	pub async fn failure_clean_lock(&self) -> Result<()> {
+
 		self.mfs.rm_r(self.currpid()).await.ok();
 		self.mfs.rm(self.lockf()).await?;
 		// Can't remove the sync pid dir, as there is no rmdir (that only removes empty dirs)

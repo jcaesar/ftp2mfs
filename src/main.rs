@@ -1,4 +1,5 @@
 use clap::Clap;
+use chrono::prelude::*;
 use async_ftp::FtpStream;
 use async_ftp::types::FileType;
 use std::path::{ Path, PathBuf };
@@ -100,6 +101,8 @@ async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<()> {
 	let ignore = ignore(&settings.ignore)
 		.context("Constructing GlobSet for ignore list")?;
 
+    let sync_start = Utc::now();
+
 	let ups = Recursor::run(&mut ftp_stream, &ignore)
 		.await.context("Retrieving file list")?;
 	let sa = SyncActs::new(current_set, ups, settings.reprieve)
@@ -122,7 +125,7 @@ async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<()> {
 		reprievestats,
 	);
 
-	out.apply(sa, &FtpProvider::new(ftp_stream, settings.source.clone())?).await
+	out.apply(sa, &FtpProvider::new(ftp_stream, settings.source.clone())?, &sync_start).await
 		.context("Sync failure")?;
 
 	Ok(())

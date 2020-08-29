@@ -88,7 +88,6 @@ pub struct SyncInfo {
 	version: u64,
 	#[serde(serialize_with = "ordered_map")]
 	pub files: HashMap<PathBuf, FileInfo>,
-	pub lastsync: DateTime<Utc>,
 	#[serde(skip_serializing_if = "Option::is_none", default)]
 	pub cid: Option<String>,
 }
@@ -111,7 +110,6 @@ impl SyncInfo {
 	pub fn new() -> SyncInfo { SyncInfo {
 		version: 1,
 		files: HashMap::new(),
-		lastsync: Utc::now(),
 		cid: None,
 	}}
 }
