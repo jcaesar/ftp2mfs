@@ -27,7 +27,7 @@ impl <'a> Recursor <'a> {
 		Ok(r.result)
 	}
 	fn rec(&mut self)
-		-> Pin<Box<dyn '_ + Future<Output=Result<()>>>>
+		-> Pin<Box<dyn '_ + Send + Future<Output=Result<()>>>>
 	{ Box::pin(async move {
 		let pth = &self.ftp.pwd()
 			.await.context("Cannot get current path")?;

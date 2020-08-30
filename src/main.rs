@@ -1,7 +1,5 @@
 use clap::Clap;
 use chrono::prelude::*;
-use async_ftp::FtpStream;
-use async_ftp::types::FileType;
 use std::path::{ Path, PathBuf };
 use anyhow::{ Result, Context, ensure };
 use ignore::gitignore::{ GitignoreBuilder, Gitignore };
@@ -14,19 +12,17 @@ pub fn bytes(b: usize) -> bytesize::ByteSize {
 }
 
 mod tomfs;
-mod provider;
 mod fromftp;
 mod nabla;
 #[cfg(test)]
 mod globtest;
+mod suite;
 
 use crate::nabla::SyncActs;
-use crate::fromftp::recursor::Recursor;
-use crate::fromftp::provider::FtpProvider;
 use crate::tomfs::ToMfs;
 	
 #[derive(Clap, Debug)]
-struct Opts {
+pub struct Opts {
 	/// FTP username override
 	#[clap(short, long)]
 	user: Option<String>,
@@ -42,7 +38,7 @@ struct Opts {
 }
 
 #[derive(Deserialize, Debug)]
-struct Settings {
+pub struct Settings {
 	#[serde(with = "url_serde")]
 	source: Url,
 	/// Reprieve period for local files after deletion on server
@@ -89,21 +85,17 @@ async fn main() -> Result<()> {
 
 async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<()> {
 	let settings = out.settings();
-	ensure!(settings.source.scheme() == "ftp",
-		"Invalid source url {}: only ftp is supported (Will I support others? Who knows!)", settings.source);
+	let suite = suite::make(&opts, &settings)?;
 
 	let current_set = out.prepare().await
 		.with_context(|| format!("Failed to prepare mfs target folder in {:?} (and read current data state from {:?})", settings.workdir.as_ref().unwrap(), &settings.target))?;
-
-	let mut ftp_stream = ftp_connect(&opts, &settings)
-		.await.context("Failed to establish FTP connection")?;
 
 	let ignore = ignore(&settings.ignore)
 		.context("Constructing GlobSet for ignore list")?;
 
 	let sync_start = Utc::now();
 
-	let ups = Recursor::run(&mut ftp_stream, &ignore)
+	let ups = suite.recurse(ignore)
 		.await.context("Retrieving file list")?;
 	let sa = SyncActs::new(current_set, ups, settings.reprieve)
 		.context("Internal error: failed to generate delta")?;
@@ -125,28 +117,12 @@ async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<()> {
 		reprievestats,
 	);
 
-	out.apply(sa, &FtpProvider::new(ftp_stream, settings.source.clone())?, &sync_start).await
+	out.apply(sa, &*suite.provider().await?, &sync_start).await
 		.context("Sync failure")?;
 
 	Ok(())
 }
 	
-
-async fn ftp_connect(opts: &Opts, settings: &Settings) -> Result<FtpStream> {
-	let host = settings.source.host_str()
-		.context(format!("No host specified in source url {}", settings.source))?;
-	let port = settings.source.port().unwrap_or(21);
-	let mut ftp_stream = FtpStream::connect(format!("{}:{}", host, port)).await?;
-	let user = opts.user.as_ref().unwrap_or(&settings.user);
-	let pass = opts.pass.as_ref().or(settings.pass.as_ref())
-		.context("No FTP password specified")?;
-	ftp_stream.login(&user, &pass).await?;
-	ftp_stream.transfer_type(FileType::Binary).await?;
-	ftp_stream.cwd(settings.source.path())
-		.await.with_context(|| format!("Cannot switch to directory {}", settings.source.path()))?;
-	Ok(ftp_stream)
-}
-
 pub(crate) fn ignore<V: AsRef<[T]>, T: AsRef<str>>(base: V) -> Result<Gitignore> {
 	let mut globs = GitignoreBuilder::new("");
 	for (i, ign) in base.as_ref().iter().map(AsRef::as_ref).enumerate() {

@@ -21,7 +21,7 @@ pub struct FtpProvider {
 }
 impl FtpProvider {
     // All of this may be neater with coprocs/generators. Some day
-	pub fn new(mut ftp: FtpStream, base: Url) -> Result<FtpProvider, anyhow::Error> {
+	pub fn new(mut ftp: FtpStream, base: Url) -> FtpProvider {
 		let (sender, mut receiver) = unbounded::<(PathBuf, Sender<Result<Vec<u8>, std::io::Error>>)>();
         log::debug!("Starting FTP file provider");
         tokio::spawn(async move {
@@ -71,12 +71,11 @@ impl FtpProvider {
 			}
 			ftp.quit().await.ok();
 		});
-		Ok(FtpProvider { mkreq: sender, base })
+	    FtpProvider { mkreq: sender, base }
 	}
 }
 
-#[async_trait::async_trait]
-impl crate::provider::Provider for FtpProvider {
+impl crate::suite::Provider for FtpProvider {
 	fn get(&self, p: &Path) -> Box<dyn AsyncRead + Send + Sync + Unpin> {
 		let (sender, receiver) = bounded(128);
 		self.mkreq.unbounded_send((p.to_path_buf(), sender)).expect("FTP client unexpectedly exited");

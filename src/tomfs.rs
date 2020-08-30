@@ -1,7 +1,7 @@
 use crate::nabla::SyncActs;
 use chrono::prelude::*;
 use std::path::{ PathBuf, Path };
-use crate::provider::Provider;
+use crate::suite::Provider;
 use crate::nabla::SyncInfo;
 use futures::io::Cursor;
 use anyhow::{ Result, Context, bail, ensure };
