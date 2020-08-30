@@ -93,6 +93,7 @@ impl<T> Unpath for T where T: AsRef<Path> {
 /// The main struct
 ///
 /// All of its functions will panic if the passed paths are not valid unicode.
+#[derive(Clone)]
 pub struct Mfs {
 	ipfs: IpfsClient,
 	/// Default hash function to use for write / create operations.
@@ -199,7 +200,7 @@ impl Mfs {
 		let mut firstwrite = true;
 		let mut total = 0;
 		let mut finished = false;
-		let mut pending: Option<Pin<Box<dyn Future<Output = Result<(), ipfs_api::response::Error>>>>> = None;
+		let mut pending: Option<Pin<Box<dyn Future<Output = Result<(), ipfs_api::response::Error>> + Send>>> = None;
 		while !finished {
 			let mut buf = Vec::new();
 			buf.resize(1 << 23, 0);
@@ -295,4 +296,22 @@ mod tests {
 
 		mfs.rm_r(basedir).await.expect("cleanup");
 	}
+
+    // Compile only test
+    #[allow(dead_code)]
+    fn good_little_future() {
+        fn good<T: Send>(_: T) {}
+		let mfs = Mfs::new("http://127.0.0.1:5001").expect("create client");
+        let a = Path::new("");
+        let b = a;
+        let dat = futures::io::Cursor::new("asdf".as_bytes());
+        good(mfs.put(a, dat));
+        good(mfs.cp(a, b));
+        good(mfs.mv(a, b));
+        good(mfs.get(a));
+        good(mfs.ls(a));
+        good(mfs.mkdir(a));
+        good(mfs.mkdirs(a));
+        good(mfs.get_fully(a));
+    }
 }
