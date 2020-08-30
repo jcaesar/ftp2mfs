@@ -93,6 +93,7 @@ impl<T> Unpath for T where T: AsRef<Path> {
 /// The main struct
 ///
 /// All of its functions will panic if the passed paths are not valid unicode.
+#[derive(Clone)]
 pub struct Mfs {
 	ipfs: IpfsClient,
 	/// Default hash function to use for write / create operations.

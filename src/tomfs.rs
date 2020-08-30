@@ -187,19 +187,49 @@ impl ToMfs {
 		Ok(curr)
 	}
 	pub async fn apply(&self, sa: SyncActs, p: &dyn Provider, sync_start: &DateTime<Utc>) -> Result<()> {
-		let SyncActs { mut meta, get, delete } = sa;
+		let SyncActs { mut meta, mut get, mut delete } = sa;
 		meta.cid = None;
 		self.write_meta(&meta).await?;
         self.mfs.put(self.lastsync(), Cursor::new(sync_start.to_rfc3339().into_bytes())).await?;
+		
+		use futures_util::sink::SinkExt;
+		use futures::stream::StreamExt;
+		let (sender, mut receiver) = futures::channel::mpsc::channel::<anyhow::Result<()>>(1);
+		let mut running: usize = 0;
+		let max_running: usize = 5;
 
-		// TODO: desequentialize
-		for d in delete.iter() {
-			self.mfs.rm_r(self.syncdata().join(d)).await?;
+		while !delete.is_empty() || !get.is_empty() {
+			if let Some(d) = delete.pop() {
+				let mut sender = sender.clone();
+				running += 1;
+				let d_abs = self.syncdata().join(&d);
+				let mfs = self.mfs.clone();
+				tokio::spawn(async move {
+					let res = mfs.rm_r(d_abs).await
+						.context(format!("Deletion: {:?}", d));
+					sender.send(res).await.expect("Parallelism synchronization");
+				});
+			}
+			if let Some(a) = get.pop() {
+				let mut _sender = sender.clone();
+				running += 1;
+				let pth = self.syncdata().join(&a);
+				let stream: Box<dyn futures::AsyncRead + Send + Sync + Unpin> = p.log_and_get(&a);
+				let mfs = self.mfs.clone();
+				tokio::spawn(async move {
+					let res = mfs.put(pth, stream)
+						//.await.context(format!("Requisiton: {:?}", &a))
+					;
+					//_sender.send(res).await.expect("Parallelism synchronization");
+				});
+			}
+			if running > max_running - 2 {
+				receiver.next().await.expect("Paralleism synchronization")?;
+			}
 		}
-		for a in get.iter() {
-			let pth = self.syncdata().join(a);
-			self.mfs.mkdirs(pth.parent().expect("Path to file should have a parent folder")).await?;
-			self.mfs.put(pth, p.log_and_get(a)).await?;
+		std::mem::drop(sender);
+		while let Some(res) = receiver.next().await {
+			res?
 		}
 
 		meta.cid = Some(self.mfs.stat(self.syncdata()).await?.context(format!("File {:?} vanished", self.syncdata()))?.hash);

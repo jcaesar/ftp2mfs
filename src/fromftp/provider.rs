@@ -14,6 +14,7 @@ use url::Url;
 use std::task::{ Poll, Context };
 use std::pin::Pin;
 
+#[derive(Clone)]
 pub struct FtpProvider {
 	mkreq: UnboundedSender<(PathBuf, Sender<Result<Vec<u8>, std::io::Error>>)>,
 	base: Url,
