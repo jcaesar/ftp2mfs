@@ -13,6 +13,7 @@ pub fn bytes(b: usize) -> bytesize::ByteSize {
 
 mod tomfs;
 mod fromftp;
+mod fromfile;
 mod nabla;
 #[cfg(test)]
 mod globtest;
@@ -47,10 +48,11 @@ pub struct Settings {
 	/// Ignore glob patterns when listing files on server (gitignore style)
 	#[serde(default)]
 	ignore: Vec<String>,
-	/// FTP username - mostly just "anonymous"
-	#[serde(default = "const_anonymous")]
-	user: String,
-	/// FTP password - mostly, just an e-mail
+	/// username - Defaults to "anonymous" for FTP
+	#[serde(default)]
+	user: Option<String>,
+	/// password - for FTP mostly just an e-mail
+	#[serde(default)]
 	pass: Option<String>,
 	/// workdir
 	#[serde(default)]
@@ -58,8 +60,6 @@ pub struct Settings {
 	/// datadir
 	target: PathBuf,
 }
-
-fn const_anonymous() -> String { "anonymous".to_owned() }
 
 #[tokio::main(basic_scheduler)]
 async fn main() -> Result<()> {
@@ -110,7 +110,7 @@ async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<()> {
 			bytes(stats.reprieve_bytes), stats.reprieve_files
 		),
 	};
-	log::info!("Will get at least {} in {} files{}, final size: {} in {} files{}.",
+	log::info!("Will sync at least {} in {} files{}, final size: {} in {} files{}.",
 		bytes(stats.get_bytes), sa.get.len(),
 		deletestats,
 		bytes(stats.final_bytes), sa.meta.files.len(),

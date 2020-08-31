@@ -6,13 +6,10 @@ use crate::Opts;
 use crate::nabla::SyncInfo;
 use anyhow::{ Result, Context };
 
+#[async_trait::async_trait]
 pub trait Provider {
-	fn get(&self, p: &Path) -> Box<dyn AsyncRead + Send + Sync + Unpin>;
+	async fn get(&self, p: &Path) -> Result<Box<dyn AsyncRead + Send + Sync + Unpin>>;
 	fn base(&self) -> &url::Url;
-	fn log_and_get(&self, p: &Path) -> Box<dyn AsyncRead + Send + Sync + Unpin> {
-		log::info!("Retrieving {}", self.base().join(p.to_str().unwrap()).unwrap().into_string());
-		return self.get(p);
-	}
 }
 
 
@@ -24,13 +21,19 @@ pub trait Suite {
 
 pub fn make(opts: &Opts, settings: &Settings) -> Result<Box<dyn Suite>> {
 	let mut source = settings.source.clone();
-	source.set_username(opts.user.as_ref().unwrap_or(&settings.user))
-		.ok().context("Username into URL")?;
-	source.set_password(opts.pass.as_deref().or(settings.pass.as_deref()))
-		.ok().context("Password into URL")?;
+	let default_username = if settings.source.scheme() == "ftp" { Some("anonymous") } else { None };
+	for user in opts.user.as_deref().or(settings.user.as_deref()).or(default_username) {
+		source.set_username(user).ok().context("Username into URL")?;
+	}
+	for pass in opts.pass.as_deref().or(settings.pass.as_deref()) {
+		source.set_password(Some(pass)).ok().context("Password into URL")?;
+	}
 	match settings.source.scheme() {
 		"ftp" => {
 			Ok(Box::new(crate::fromftp::Suite { source }))
+		},
+		"file" => {
+			Ok(Box::new(crate::fromfile::Suite { source }))
 		},
 		_ => anyhow::bail!("Invalid source url {}: only ftp is supported", settings.source),
 	}

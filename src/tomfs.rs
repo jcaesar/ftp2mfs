@@ -213,7 +213,8 @@ impl ToMfs {
 				let mut sender = sender.clone();
 				running += 1;
 				let pth = self.syncdata().join(&a);
-				let stream: Box<dyn futures::AsyncRead + Send + Sync + Unpin> = p.log_and_get(&a);
+				log::info!("Syncing {}", &a.to_string_lossy());
+				let stream: Box<dyn futures::AsyncRead + Send + Sync + Unpin> = p.get(&a).await?;
 				let mfs = self.mfs.clone();
 				tokio::spawn(async move {
 					let res = mfs.put(&pth, stream)

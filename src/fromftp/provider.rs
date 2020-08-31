@@ -75,11 +75,12 @@ impl FtpProvider {
 	}
 }
 
+#[async_trait::async_trait]
 impl crate::suite::Provider for FtpProvider {
-	fn get(&self, p: &Path) -> Box<dyn AsyncRead + Send + Sync + Unpin> {
+	async fn get(&self, p: &Path) -> anyhow::Result<Box<dyn AsyncRead + Send + Sync + Unpin>> {
 		let (sender, receiver) = bounded(128);
 		self.mkreq.unbounded_send((p.to_path_buf(), sender)).expect("FTP client unexpectedly exited");
-		Box::new(ChannelReader { receiver, current: Cursor::new(vec![]) })
+		Ok(Box::new(ChannelReader { receiver, current: Cursor::new(vec![]) }))
 	}
 	fn base(&self) -> &Url { &self.base }
 }
