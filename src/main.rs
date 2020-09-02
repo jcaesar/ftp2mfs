@@ -14,6 +14,7 @@ pub fn bytes(b: usize) -> bytesize::ByteSize {
 mod tomfs;
 mod fromftp;
 mod fromfile;
+mod fromhttp;
 mod nabla;
 #[cfg(test)]
 mod globtest;
@@ -40,7 +41,6 @@ pub struct Opts {
 
 #[derive(Deserialize, Debug)]
 pub struct Settings {
-	#[serde(with = "url_serde")]
 	source: Url,
 	/// Reprieve period for local files after deletion on server
 	#[serde(with = "serde_humantime", default)]

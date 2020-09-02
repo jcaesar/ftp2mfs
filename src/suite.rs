@@ -29,12 +29,9 @@ pub fn make(opts: &Opts, settings: &Settings) -> Result<Box<dyn Suite>> {
 		source.set_password(Some(pass)).ok().context("Password into URL")?;
 	}
 	match settings.source.scheme() {
-		"ftp" => {
-			Ok(Box::new(crate::fromftp::Suite { source }))
-		},
-		"file" => {
-			Ok(Box::new(crate::fromfile::Suite { source }))
-		},
+		"ftp" => Ok(Box::new(crate::fromftp::Suite { source })),
+		"file" => Ok(Box::new(crate::fromfile::Suite { source })),
+        "http" | "https" => Ok(Box::new(crate::fromhttp::Suite::new(source))),
 		_ => anyhow::bail!("Invalid source url {}: only ftp is supported", settings.source),
 	}
 }
