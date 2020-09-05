@@ -7,7 +7,7 @@ use tokio::io::AsyncReadExt;
 use tokio::io::AsyncBufReadExt;
 use core::task::Poll;
 use std::pin::Pin;
-use tokio::io::{ AsyncRead, AsyncWrite, BufReader };
+use tokio::io::{ AsyncBufRead, AsyncRead, AsyncWrite, BufReader };
 use std::marker::Unpin;
 use tokio::net::tcp::{ OwnedWriteHalf, OwnedReadHalf };
 
@@ -18,6 +18,18 @@ struct RsyncClient {
 }
 impl RsyncClient {
     pub async fn new(url: url::Url) -> Result<RsyncClient> {
+        let (path, base) = Self::parse_url(&url)?;
+        let (read, mut write) = Self::connect(&url).await?;
+        let mut read = BufReader::new(read);
+        Self::send_handshake(&mut write, path, base).await?;
+        Self::read_handshake(&mut read, base).await?;
+        let mut read = EnvelopeRead::new(read); // Server multiplex start
+        let files = Self::read_file_list(&mut read).await?;
+        let mut client = RsyncClient { read, write, files };
+        client.phase_switch().await?;
+        Ok(client)
+    }
+    fn parse_url(url: &url::Url) -> Result<(&Path, &str)> {
         anyhow::ensure!(url.scheme() == "rsync", "Only rsync urls supported, not {}", url);
         anyhow::ensure!(url.path() != "", "Path cannot be / - your url {} is cut short.", url);
         let path = Path::new(url.path());
@@ -34,6 +46,9 @@ impl RsyncClient {
             };
         };
         let base = base.to_str().expect("TODO: handle paths properly");
+        Ok((path, base))
+    }
+    async fn connect(url: &url::Url) -> Result<(OwnedReadHalf, OwnedWriteHalf)> {
         let mut addrs = url.socket_addrs(|| Some(873))
             .context(format!("Get socket addr from url {}", url))?;
         let mut stream = TcpStream::connect(
@@ -45,9 +60,12 @@ impl RsyncClient {
                 break;
             }
         }
-        let (read, mut write) = stream.context(format!("Connect to {} ({:?})", url, addrs))?.into_split();
-        // TODO: The openrsync docs only exist for rsync 27, but below rsync 30, dates beyond 1970 + 2^31 can't be handled.
+        Ok(stream.context(format!("Connect to {} ({:?})", url, addrs))?.into_split())
+    }
+    async fn send_handshake(write: &mut OwnedWriteHalf, path: &Path, base: &str) -> Result<()> {
+        // rsync seems to be ok with us sending it all at once
         let initial: Vec<u8> = [
+            // TODO: The openrsync docs only exist for rsync 27, but below rsync 30, dates beyond 1970 + 2^31 can't be handled.
             &b"@RSYNCD: 27.0\n"[..],
             base.as_bytes(),
             &b"\n"[..],
@@ -60,8 +78,9 @@ impl RsyncClient {
             &b"\0\0\0\0"[..],
         ].concat();
         write.write_all(&initial).await?;
-        //stream.shutdown(std::net::Shutdown::Write)?;
-        let mut read = BufReader::new(read);
+        Ok(())
+    }
+    async fn read_handshake<T: AsyncBufRead + Unpin>(read: &mut T, base: &str) -> Result<()> {
         let hello = &mut String::new();
         read.read_line(hello)
             .await.context("Read server hello")?;
@@ -79,8 +98,14 @@ impl RsyncClient {
             .await.context("Read server startup")?;
         anyhow::ensure!(select == &format!("{}OK\n", rsyncd), "Could not select {}: {}", base, select);
         let _random_seed = read.read_u32().await?; // Read random seed - we don't care
-        // Server multiplex start
-        let mut read = EnvelopeRead::new(read);
+        Ok(())
+    }
+    async fn phase_switch(&mut self) -> Result<()> {
+        self.write.write_i32_le(-1i32).await?;
+        anyhow::ensure!(self.read.read_i32_le().await? == -1, "Protocol error: phase switch"); // What it is good for? No idea.
+        Ok(())
+    }
+    async fn read_file_list<T: AsyncRead + Unpin + Send>(read: &mut T) -> Result<()> {
         let mut filename_buf: Vec<u8> = vec![];
         let mut mode_buf = None;
         let mut mtime_buf = None;
@@ -116,14 +141,7 @@ impl RsyncClient {
             // Maydo: skip rdev and symlink targets (shouldn't be present since we don't pass -Dl)
             println!("{:0>16b} {} {:?} {}", mode, size, mtime_buf, String::from_utf8_lossy(&filename_buf));
         }
-        anyhow::ensure!(read.read_i32_le().await? == 0, "Protocol error: expected 0"); // What it is good for? No idea.
-        let mut client = RsyncClient { read, write, files: () };
-        client.phase_switch().await?;
-        Ok(client)
-    }
-    async fn phase_switch(&mut self) -> Result<()> {
-        self.write.write_i32_le(-1i32).await?;
-        anyhow::ensure!(self.read.read_i32_le().await? == -1, "Protocol error: phase switch"); // What it is good for? No idea.
+        anyhow::ensure!(read.read_i32_le().await? == 0, "Protocol error: expected 0"); // What it is good for? No idea. Something about mapping uids/gids to names.
         Ok(())
     }
     #[allow(dead_code)]
