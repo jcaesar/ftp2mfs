@@ -20,8 +20,21 @@ use tokio::sync::Mutex as AsyncMutex;
 
 #[derive(Clone)]
 pub struct RsyncClient {
+    inner: Arc<RsyncClientInner>
+}
+
+struct RsyncClientInner {
     reqs: Requests,
-    write: Arc<AsyncMutex<OwnedWriteHalf>>
+    write: AsyncMutex<OwnedWriteHalf>,
+    finish: SyncMutex<Option<tokio::task::JoinHandle<Result<Enveloped>>>>,
+}
+
+/// read/written as viewed by server(?)
+#[derive(Clone, Debug)]
+pub struct Stats {
+    bytes_read: i64,
+    bytes_written: i64,
+    file_size: i64
 }
 
 impl RsyncClient {
@@ -35,23 +48,47 @@ impl RsyncClient {
         let files = Self::read_file_list(&mut read).await?;
         write.write_i32_le(-1).await?; anyhow::ensure!(read.read_i32_le().await? == -1, "Phase switch receive-list -> receive-file");
         let reqs: Requests = Arc::new(SyncMutex::new(Some(default())));
-        tokio::spawn(ReadFilesProcess { read, reqs: reqs.clone() }.run());
-        Ok((RsyncClient { reqs: reqs.clone(), write: Arc::new(AsyncMutex::new(write)) }, files))
+        let process = tokio::spawn(ReadFilesProcess { read, reqs: reqs.clone() }.run());
+        let inner = RsyncClientInner {
+            reqs: reqs.clone(),
+            write: AsyncMutex::new(write),
+            finish: SyncMutex::new(Some(process)),
+        };
+        Ok((RsyncClient { inner: Arc::new(inner) }, files))
     }
     pub async fn get(&mut self, file: &File) -> Result<impl AsyncRead> {
         // TODO: Somehow make sure that this is our file, with an index from our list - and not a different instance
         let (data_send, data_recv) = mpsc::channel(10);
-        self.reqs.lock().unwrap()
+        self.inner.reqs.lock().unwrap()
             .as_mut()
             .context("Client fully exited")?
             .entry(file.idx)
             .or_insert(vec![])
             .push(data_send);
-        let mut write = self.write.lock().await;
+        let mut write = self.inner.write.lock().await;
         write.write_i32_le(file.idx as i32).await?;
         write.write_all(&[0u8; 16]).await?; // We want no blocks, blocklength, checksum, or terminal block. 4 x 0i32 = 16
         Ok(tokio::io::stream_reader(data_recv))
     }
+    pub async fn close(&mut self) -> Result<Stats> {
+        let read = self.inner.finish.lock().unwrap().take();
+        if let Some(read) = read {
+            let mut write = self.inner.write.lock().await;
+            write.write_i32_le(-1).await?; // phase switch, read by ReadProcess
+            let mut read = read.await??;
+            let stats = Stats {
+                bytes_read: read.read_rsync_long().await?,
+                bytes_written: read.read_rsync_long().await?,
+                file_size: read.read_rsync_long().await?,
+            };
+            write.write_i32_le(-1).await?; // EoS
+            write.shutdown();
+            Ok(stats)
+        } else {
+            anyhow::bail!("Only one can close");
+        }
+    }
+
 
 
     fn parse_url(url: &url::Url) -> Result<(&Path, &str)> {
@@ -199,14 +236,15 @@ impl RsyncClient {
 }
 
 type Requests = Arc<SyncMutex<Option<HashMap<usize, Vec<mpsc::Sender<Result<Bytes, tokio::io::Error>>>>>>>;
+type Enveloped = EnvelopeRead<BufReader<OwnedReadHalf>>;
 
 struct ReadFilesProcess {
-    read: EnvelopeRead<BufReader<OwnedReadHalf>>,
+    read: Enveloped,
     reqs: Requests,
 }
 
 impl ReadFilesProcess {
-    async fn run(mut self) -> Result<()> {
+    async fn run(mut self) -> Result<Enveloped> {
         let res = self.process().await;
         println!("Client exiting");
         let remaining = self.reqs.lock().unwrap().take();
@@ -216,7 +254,8 @@ impl ReadFilesProcess {
                 c.send(Err(Error::new(ErrorKind::ConnectionAborted, anyhow::anyhow!("Client exited")))).await.ok();
             }
         }
-        res
+        res?;
+        Ok(self.read)
     }
     async fn process(&mut self) -> Result<()> {
         loop {
@@ -402,5 +441,9 @@ mod tests {
         let mut buf = vec![];
         req.read_to_end(&mut buf).await.unwrap();
         hexdump::hexdump(&buf);
+        let mut req = BufReader::new(cli.get(&files[2]).await.unwrap());
+        let mut buf = vec![];
+        req.read_to_end(&mut buf).await.unwrap();
+        println!("{:?}", cli.close().await.unwrap());
     }
 }
