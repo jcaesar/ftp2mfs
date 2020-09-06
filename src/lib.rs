@@ -7,27 +7,27 @@ use tokio::io::AsyncReadExt;
 use tokio::io::AsyncBufReadExt;
 use core::task::Poll;
 use std::pin::Pin;
-use tokio::io::{ AsyncBufRead, AsyncRead, AsyncWrite, BufReader };
+use tokio::io::{ AsyncBufRead, AsyncRead, BufReader };
 use std::marker::Unpin;
 use tokio::net::tcp::{ OwnedWriteHalf, OwnedReadHalf };
+use chrono::prelude::*;
 
 struct RsyncClient {
     read: EnvelopeRead<BufReader<OwnedReadHalf>>,
     write: OwnedWriteHalf,
-    files: (),
 }
 impl RsyncClient {
-    pub async fn new(url: url::Url) -> Result<RsyncClient> {
+    pub async fn connect(url: url::Url) -> Result<(RsyncClient, Vec<File>)> {
         let (path, base) = Self::parse_url(&url)?;
-        let (read, mut write) = Self::connect(&url).await?;
+        let (read, mut write) = Self::stream(&url).await?;
         let mut read = BufReader::new(read);
         Self::send_handshake(&mut write, path, base).await?;
         Self::read_handshake(&mut read, base).await?;
         let mut read = EnvelopeRead::new(read); // Server multiplex start
         let files = Self::read_file_list(&mut read).await?;
-        let mut client = RsyncClient { read, write, files };
+        let mut client = RsyncClient { read, write };
         client.phase_switch().await?;
-        Ok(client)
+        Ok((client, files))
     }
     fn parse_url(url: &url::Url) -> Result<(&Path, &str)> {
         anyhow::ensure!(url.scheme() == "rsync", "Only rsync urls supported, not {}", url);
@@ -48,7 +48,7 @@ impl RsyncClient {
         let base = base.to_str().expect("TODO: handle paths properly");
         Ok((path, base))
     }
-    async fn connect(url: &url::Url) -> Result<(OwnedReadHalf, OwnedWriteHalf)> {
+    async fn stream(url: &url::Url) -> Result<(OwnedReadHalf, OwnedWriteHalf)> {
         let mut addrs = url.socket_addrs(|| Some(873))
             .context(format!("Get socket addr from url {}", url))?;
         let mut stream = TcpStream::connect(
@@ -105,7 +105,8 @@ impl RsyncClient {
         anyhow::ensure!(self.read.read_i32_le().await? == -1, "Protocol error: phase switch"); // What it is good for? No idea.
         Ok(())
     }
-    async fn read_file_list<T: AsyncRead + Unpin + Send>(read: &mut T) -> Result<()> {
+    async fn read_file_list<T: AsyncRead + Unpin + Send>(read: &mut T) -> Result<Vec<File>> {
+        let mut ret = vec![];
         let mut filename_buf: Vec<u8> = vec![];
         let mut mode_buf = None;
         let mut mtime_buf = None;
@@ -123,10 +124,18 @@ impl RsyncClient {
             };
             filename_buf.resize(filename_length + inherited_filename_length, 0);
             read.read_exact(&mut filename_buf[inherited_filename_length .. ]).await?;
+            let show = String::from_utf8_lossy(&filename_buf);
             let size = read.read_rsync_long().await?;
-            mtime_buf = if meta.mtime_repeated() { mtime_buf } else { Some(read.read_i32_le().await?) };
+            anyhow::ensure!(size >= 0, "Protocol error: negative file size for {}", show);
+            let size = size as u64;
+            mtime_buf = if meta.mtime_repeated() { mtime_buf } else {
+                let ts = read.read_i32_le().await?;
+                let naive = NaiveDateTime::from_timestamp(ts as i64, 0);
+                let datetime: DateTime<Utc> = DateTime::from_utc(naive, Utc);
+                Some(datetime)
+            };
             let mode = if meta.file_mode_repeated() {
-                mode_buf.context(format!("Protocol error: first file {} without mode", String::from_utf8_lossy(&filename_buf)))?
+                mode_buf.context(format!("Protocol error: first file {} without mode", show))?
             } else {
                 read.read_u32_le().await?
             };
@@ -145,22 +154,47 @@ impl RsyncClient {
                read.read_exact(&mut link).await?;
                Some(link)
             } else { None };
-            println!("{} {} {:?} {}{}",
-                unix_mode::to_string(mode),
-                size, mtime_buf,
-                String::from_utf8_lossy(&filename_buf),
-                symlink.map(|s| format!(" -> {}", String::from_utf8_lossy(&s))).unwrap_or("".to_owned())
-            );
+            let idx = ret.len();
+            let f = File {
+                path: filename_buf.clone(),
+                mtime: mtime_buf,
+                symlink, mode, size, idx,
+            };
+            println!("{}", f);
+            ret.push(f);
         }
         anyhow::ensure!(read.read_i32_le().await? == 0, "Protocol error: expected 0"); // What it is good for? No idea. Something about mapping uids/gids to names.
-        Ok(())
+        Ok(ret)
     }
     #[allow(dead_code)]
     async fn dbg_close(mut self) -> Result<()> {
+        self.write.write_i32_le(-1).await?;
         std::mem::drop(self.write);
         let buf = &mut vec![];
         self.read.read_to_end(buf).await?;
         hexdump::hexdump(buf);
+        Ok(())
+    }
+}
+
+struct File {
+    pub path: Vec<u8>,
+    pub symlink: Option<Vec<u8>>,
+    /// e.g. unix_mode is useful for parsing
+    pub mode: u32,
+    pub size: u64,
+    pub mtime: Option<DateTime<Utc>>,
+    idx: usize,
+}
+impl std::fmt::Display for File {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(fmt, "{} {:>12} {} {}{}",
+            unix_mode::to_string(self.mode),
+            self.size,
+            self.mtime.as_ref().map(DateTime::to_rfc3339).unwrap_or("                    ".to_owned()),
+            String::from_utf8_lossy(&self.path),
+            self.symlink.as_ref().map(|s| format!(" -> {}", String::from_utf8_lossy(&s))).unwrap_or("".to_owned())
+        );
         Ok(())
     }
 }
@@ -275,7 +309,7 @@ mod tests {
     #[tokio::test]
     async fn it_works() {
         let url = url::Url::parse("rsync://cameo/ftp").unwrap();
-        let mut cli = RsyncClient::new(url).await.unwrap();
+        let (mut cli, _files) = RsyncClient::connect(url).await.unwrap();
         cli.phase_switch().await.unwrap();
         cli.dbg_close().await.unwrap();
     }
