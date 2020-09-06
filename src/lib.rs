@@ -71,7 +71,7 @@ impl RsyncClient {
             &b"\n"[..],
             &b"--server\n"[..],
             &b"--sender\n"[..],
-            &b"-r\n"[..],
+            &b"-rl\n"[..],
             &b".\n"[..],
             path.to_str().unwrap().as_bytes(),
             &b"/\n\n"[..],
@@ -138,8 +138,19 @@ impl RsyncClient {
             if !meta.gid_repeated() {
                 let _gid = read.read_i32_le().await?;
             }
-            // Maydo: skip rdev and symlink targets (shouldn't be present since we don't pass -Dl)
-            println!("{:0>16b} {} {:?} {}", mode, size, mtime_buf, String::from_utf8_lossy(&filename_buf));
+            let symlink = if unix_mode::is_symlink(mode) {
+               let len = read.read_u32_le().await? as usize;
+               let mut link = vec![];
+               link.resize(len, 0);
+               read.read_exact(&mut link).await?;
+               Some(link)
+            } else { None };
+            println!("{} {} {:?} {}{}",
+                unix_mode::to_string(mode),
+                size, mtime_buf,
+                String::from_utf8_lossy(&filename_buf),
+                symlink.map(|s| format!(" -> {}", String::from_utf8_lossy(&s))).unwrap_or("".to_owned())
+            );
         }
         anyhow::ensure!(read.read_i32_le().await? == 0, "Protocol error: expected 0"); // What it is good for? No idea. Something about mapping uids/gids to names.
         Ok(())
@@ -254,12 +265,7 @@ trait RsyncReadExt: AsyncRead + Unpin {
         })
     }
 }
-
 impl<T: tokio::io::AsyncRead + Unpin> RsyncReadExt for T {}
-
-//impl<T: tokio::io::AsyncBufRead> tokio::io::AsyncBufRead for EnvelopeRead<T> {
-//
-//}
 
 
 #[cfg(test)]

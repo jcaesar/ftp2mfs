@@ -10,6 +10,7 @@ url = "2.1"
 anyhow = "1.0"
 hexdump = "0.1"
 async-trait = "0.1"
+unix_mode = "0.1"
 
 [dev-dependencies]
 tokio = { version = "0.2", features = ["full"] }
