@@ -13,15 +13,10 @@ use tokio::net::tcp::{ OwnedWriteHalf, OwnedReadHalf };
 use chrono::prelude::*;
 use bytes::{ Bytes, BytesMut };
 fn default<T: Default>() -> T { std::default::Default::default() } // default_free_fn
-use tokio::sync::{ oneshot, mpsc };
-use std::sync::{ Arc, Mutex as SyncMutex, MutexGuard as SyncMutexGuard };
+use tokio::sync::mpsc;
+use std::sync::{ Arc, Mutex as SyncMutex };
 use std::collections::HashMap;
 use tokio::sync::Mutex as AsyncMutex;
-
-struct Req {
-    idx: usize,
-    resp: mpsc::Sender<Result<Bytes, tokio::io::Error>>,
-}
 
 #[derive(Clone)]
 pub struct RsyncClient {
@@ -32,7 +27,7 @@ pub struct RsyncClient {
 impl RsyncClient {
     pub async fn connect(url: url::Url) -> Result<(RsyncClient, Vec<File>)> {
         let (path, base) = Self::parse_url(&url)?;
-        let (mut read, mut write) = Self::stream(&url).await?;
+        let (read, mut write) = Self::stream(&url).await?;
         let mut read = BufReader::new(read);
         Self::send_handshake(&mut write, path, base).await?;
         Self::read_handshake(&mut read, base).await?;
@@ -183,7 +178,7 @@ impl RsyncClient {
                read.read_exact(&mut link).await?;
                Some(link)
             } else { None };
-            let idx = ret.len();
+            let idx = usize::MAX;
             let f = File {
                 path: filename_buf.clone(),
                 mtime: mtime_buf,
@@ -194,6 +189,11 @@ impl RsyncClient {
         }
         let io_err = read.read_i32_le().await?;
         anyhow::ensure!(io_err == 0, "Protocol error: expected 0 IO errors, got {}.", io_err);
+        ret.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+        // Hmm. rsyn also dedupes. I've never seen dupes, so I don't know why.
+        for (i, mut f) in ret.iter_mut().enumerate() {
+            f.idx = i;
+        }
         Ok(ret)
     }
 }
@@ -394,7 +394,7 @@ mod tests {
     async fn it_works() {
         let url = url::Url::parse("rsync://cameo/ftp").unwrap();
         let (mut cli, files) = RsyncClient::connect(url).await.unwrap();
-        let mut req = BufReader::new(cli.get(&files[1]).await.unwrap());
+        let mut req = BufReader::new(cli.get(&files[4]).await.unwrap());
         let mut buf = vec![];
         req.read_to_end(&mut buf).await.unwrap();
         hexdump::hexdump(&buf);
