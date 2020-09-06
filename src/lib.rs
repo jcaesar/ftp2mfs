@@ -11,24 +11,54 @@ use tokio::io::{ AsyncBufRead, AsyncRead, BufReader };
 use std::marker::Unpin;
 use tokio::net::tcp::{ OwnedWriteHalf, OwnedReadHalf };
 use chrono::prelude::*;
+use bytes::{ Bytes, BytesMut };
+fn default<T: Default>() -> T { std::default::Default::default() } // default_free_fn
+use tokio::sync::{ oneshot, mpsc };
+use std::sync::{ Arc, Mutex as SyncMutex, MutexGuard as SyncMutexGuard };
+use std::collections::HashMap;
+use tokio::sync::Mutex as AsyncMutex;
 
-struct RsyncClient {
-    read: EnvelopeRead<BufReader<OwnedReadHalf>>,
-    write: OwnedWriteHalf,
+struct Req {
+    idx: usize,
+    resp: mpsc::Sender<Result<Bytes, tokio::io::Error>>,
 }
+
+#[derive(Clone)]
+pub struct RsyncClient {
+    reqs: Requests,
+    write: Arc<AsyncMutex<OwnedWriteHalf>>
+}
+
 impl RsyncClient {
     pub async fn connect(url: url::Url) -> Result<(RsyncClient, Vec<File>)> {
         let (path, base) = Self::parse_url(&url)?;
-        let (read, mut write) = Self::stream(&url).await?;
+        let (mut read, mut write) = Self::stream(&url).await?;
         let mut read = BufReader::new(read);
         Self::send_handshake(&mut write, path, base).await?;
         Self::read_handshake(&mut read, base).await?;
         let mut read = EnvelopeRead::new(read); // Server multiplex start
         let files = Self::read_file_list(&mut read).await?;
-        let mut client = RsyncClient { read, write };
-        client.phase_switch().await?;
-        Ok((client, files))
+        write.write_i32_le(-1).await?; anyhow::ensure!(read.read_i32_le().await? == -1, "Phase switch receive-list -> receive-file");
+        let reqs: Requests = Arc::new(SyncMutex::new(Some(default())));
+        tokio::spawn(ReadFilesProcess { read, reqs: reqs.clone() }.run());
+        Ok((RsyncClient { reqs: reqs.clone(), write: Arc::new(AsyncMutex::new(write)) }, files))
     }
+    pub async fn get(&mut self, file: &File) -> Result<impl AsyncRead> {
+        // TODO: Somehow make sure that this is our file, with an index from our list - and not a different instance
+        let (data_send, data_recv) = mpsc::channel(10);
+        self.reqs.lock().unwrap()
+            .as_mut()
+            .context("Client fully exited")?
+            .entry(file.idx)
+            .or_insert(vec![])
+            .push(data_send);
+        let mut write = self.write.lock().await;
+        write.write_i32_le(file.idx as i32).await?;
+        write.write_all(&[0u8; 16]).await?; // We want no blocks, blocklength, checksum, or terminal block. 4 x 0i32 = 16
+        Ok(tokio::io::stream_reader(data_recv))
+    }
+
+
     fn parse_url(url: &url::Url) -> Result<(&Path, &str)> {
         anyhow::ensure!(url.scheme() == "rsync", "Only rsync urls supported, not {}", url);
         anyhow::ensure!(url.path() != "", "Path cannot be / - your url {} is cut short.", url);
@@ -66,15 +96,19 @@ impl RsyncClient {
         // rsync seems to be ok with us sending it all at once
         let initial: Vec<u8> = [
             // TODO: The openrsync docs only exist for rsync 27, but below rsync 30, dates beyond 1970 + 2^31 can't be handled.
+            // Client hello
             &b"@RSYNCD: 27.0\n"[..],
+            // Select root
             base.as_bytes(),
             &b"\n"[..],
+            // Remote command
             &b"--server\n"[..],
             &b"--sender\n"[..],
             &b"-rl\n"[..],
             &b".\n"[..],
             path.to_str().unwrap().as_bytes(),
             &b"/\n\n"[..],
+            // Exclusion list
             &b"\0\0\0\0"[..],
         ].concat();
         write.write_all(&initial).await?;
@@ -98,11 +132,6 @@ impl RsyncClient {
             .await.context("Read server startup")?;
         anyhow::ensure!(select == &format!("{}OK\n", rsyncd), "Could not select {}: {}", base, select);
         let _random_seed = read.read_u32().await?; // Read random seed - we don't care
-        Ok(())
-    }
-    async fn phase_switch(&mut self) -> Result<()> {
-        self.write.write_i32_le(-1i32).await?;
-        anyhow::ensure!(self.read.read_i32_le().await? == -1, "Protocol error: phase switch"); // What it is good for? No idea.
         Ok(())
     }
     async fn read_file_list<T: AsyncRead + Unpin + Send>(read: &mut T) -> Result<Vec<File>> {
@@ -163,21 +192,76 @@ impl RsyncClient {
             println!("{}", f);
             ret.push(f);
         }
-        anyhow::ensure!(read.read_i32_le().await? == 0, "Protocol error: expected 0"); // What it is good for? No idea. Something about mapping uids/gids to names.
+        let io_err = read.read_i32_le().await?;
+        anyhow::ensure!(io_err == 0, "Protocol error: expected 0 IO errors, got {}.", io_err);
         Ok(ret)
-    }
-    #[allow(dead_code)]
-    async fn dbg_close(mut self) -> Result<()> {
-        self.write.write_i32_le(-1).await?;
-        std::mem::drop(self.write);
-        let buf = &mut vec![];
-        self.read.read_to_end(buf).await?;
-        hexdump::hexdump(buf);
-        Ok(())
     }
 }
 
-struct File {
+type Requests = Arc<SyncMutex<Option<HashMap<usize, Vec<mpsc::Sender<Result<Bytes, tokio::io::Error>>>>>>>;
+
+struct ReadFilesProcess {
+    read: EnvelopeRead<BufReader<OwnedReadHalf>>,
+    reqs: Requests,
+}
+
+impl ReadFilesProcess {
+    async fn run(mut self) -> Result<()> {
+        let res = self.process().await;
+        println!("Client exiting");
+        let remaining = self.reqs.lock().unwrap().take();
+        for (_, cs) in remaining.unwrap().into_iter() {
+            for mut c in cs.into_iter() {
+                use tokio::io::{ Error, ErrorKind };
+                c.send(Err(Error::new(ErrorKind::ConnectionAborted, anyhow::anyhow!("Client exited")))).await.ok();
+            }
+        }
+        res
+    }
+    async fn process(&mut self) -> Result<()> {
+        loop {
+            let idx = self.read.read_i32_le().await?;
+            if idx == -1 {
+                break Ok(());
+            }
+            { // block info
+                let mut buf = [0u8; 16];
+                self.read.read_exact(&mut buf).await?;
+                anyhow::ensure!(buf == [0u8; 16], "Protocol error: we requested a plain file, not blocks and checksums");
+            }
+            let idx = idx as usize;
+            let mut backchan = {
+                let mut table = self.reqs.lock().unwrap();
+                let table = table.as_mut().unwrap();
+                let mut reqs = table.get_mut(&idx);
+                let req = reqs.as_mut().and_then(|v| v.pop()).context("Got file - no memory of requesting it")?;
+                if reqs.map(|v| v.len()) == Some(0) { table.remove(&idx).unwrap(); }
+                req
+            };
+            loop {
+                let chunklen = self.read.read_i32_le().await?;
+                if chunklen == 0 {
+                    break;
+                }
+                anyhow::ensure!(chunklen > 0, "Protocol error: negative sized chunk");
+                let mut chunklen = chunklen as usize;
+                // TODO: send to current chan
+                while chunklen > 0 {
+                    let read = std::cmp::min(1 << 16, chunklen);
+                    let mut buf = BytesMut::with_capacity(read);
+                    chunklen -= self.read.read_buf(&mut buf).await?;
+                    backchan.send(Ok(buf.into())).await?;
+                }
+            }
+            { // Hash. TODO: check
+                let mut buf = [0u8; 16];
+                self.read.read_exact(&mut buf).await?;
+            }
+        }
+    }
+}
+
+pub struct File {
     pub path: Vec<u8>,
     pub symlink: Option<Vec<u8>>,
     /// e.g. unix_mode is useful for parsing
@@ -194,7 +278,7 @@ impl std::fmt::Display for File {
             self.mtime.as_ref().map(DateTime::to_rfc3339).unwrap_or("                    ".to_owned()),
             String::from_utf8_lossy(&self.path),
             self.symlink.as_ref().map(|s| format!(" -> {}", String::from_utf8_lossy(&s))).unwrap_or("".to_owned())
-        );
+        )?;
         Ok(())
     }
 }
@@ -309,8 +393,14 @@ mod tests {
     #[tokio::test]
     async fn it_works() {
         let url = url::Url::parse("rsync://cameo/ftp").unwrap();
-        let (mut cli, _files) = RsyncClient::connect(url).await.unwrap();
-        cli.phase_switch().await.unwrap();
-        cli.dbg_close().await.unwrap();
+        let (mut cli, files) = RsyncClient::connect(url).await.unwrap();
+        let mut req = BufReader::new(cli.get(&files[1]).await.unwrap());
+        let mut buf = vec![];
+        req.read_to_end(&mut buf).await.unwrap();
+        hexdump::hexdump(&buf);
+        let mut req = BufReader::new(cli.get(&files[1]).await.unwrap());
+        let mut buf = vec![];
+        req.read_to_end(&mut buf).await.unwrap();
+        hexdump::hexdump(&buf);
     }
 }
