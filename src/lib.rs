@@ -462,25 +462,3 @@ trait RsyncReadExt: AsyncRead + Unpin {
     }
 }
 impl<T: tokio::io::AsyncRead + Unpin> RsyncReadExt for T {}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
- 
-    #[tokio::test]
-    async fn it_works() {
-        let url = url::Url::parse("rsync://cameo/ftp").unwrap();
-        let (mut cli, files) = RsyncClient::connect(url).await.unwrap();
-        cli.get(&files[2]).await.unwrap();
-        let mut req = BufReader::new(cli.get(&files[4]).await.unwrap());
-        let mut buf = vec![];
-        req.read_to_end(&mut buf).await.unwrap();
-        hexdump::hexdump(&buf);
-        let mut req = BufReader::new(cli.get(&files[1]).await.unwrap());
-        let mut buf = vec![];
-        req.read_to_end(&mut buf).await.unwrap();
-        hexdump::hexdump(&buf);
-        cli.get(&files[2]).await.unwrap();
-        println!("{:?}", cli.close().await.unwrap());
-    }
-}
