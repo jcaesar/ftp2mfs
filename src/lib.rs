@@ -17,6 +17,9 @@ use tokio::sync::mpsc;
 use std::sync::{ Arc, Mutex as SyncMutex };
 use std::collections::HashMap;
 use tokio::sync::Mutex as AsyncMutex;
+use std::sync::atomic::{ AtomicUsize, Ordering as AtomicOrder };
+
+static NEXT_CLIENT_ID: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Clone)]
 pub struct RsyncClient {
@@ -27,6 +30,7 @@ struct RsyncClientInner {
     reqs: Requests,
     write: AsyncMutex<OwnedWriteHalf>,
     finish: SyncMutex<Option<tokio::task::JoinHandle<Result<Enveloped>>>>,
+    id: usize,
 }
 
 /// read/written as viewed by server(?)
@@ -45,19 +49,26 @@ impl RsyncClient {
         Self::send_handshake(&mut write, path, base).await?;
         Self::read_handshake(&mut read, base).await?;
         let mut read = EnvelopeRead::new(read); // Server multiplex start
-        let files = Self::read_file_list(&mut read).await?;
+        let id = NEXT_CLIENT_ID.fetch_add(1, AtomicOrder::SeqCst);
+        let files = Self::read_file_list(&mut read, id).await?;
         write.write_i32_le(-1).await?; anyhow::ensure!(read.read_i32_le().await? == -1, "Phase switch receive-list -> receive-file");
         let reqs: Requests = Arc::new(SyncMutex::new(Some(default())));
-        let process = tokio::spawn(ReadFilesProcess { read, reqs: reqs.clone() }.run());
+        let process = tokio::spawn(ReadFilesProcess {
+            read,
+            reqs: reqs.clone(),
+            current: None,
+        }.run());
         let inner = RsyncClientInner {
             reqs: reqs.clone(),
             write: AsyncMutex::new(write),
             finish: SyncMutex::new(Some(process)),
+            id,
         };
         Ok((RsyncClient { inner: Arc::new(inner) }, files))
     }
     pub async fn get(&mut self, file: &File) -> Result<impl AsyncRead> {
-        // TODO: Somehow make sure that this is our file, with an index from our list - and not a different instance
+        anyhow::ensure!(self.inner.id == file.client_id, "Requested file from client that was not listed in that client's connect call");
+        anyhow::ensure!(file.is_file(), "Can only request files, {} is not", file);
         let (data_send, data_recv) = mpsc::channel(10);
         self.inner.reqs.lock().unwrap()
             .as_mut()
@@ -88,8 +99,6 @@ impl RsyncClient {
             anyhow::bail!("Only one can close");
         }
     }
-
-
 
     fn parse_url(url: &url::Url) -> Result<(&Path, &str)> {
         anyhow::ensure!(url.scheme() == "rsync", "Only rsync urls supported, not {}", url);
@@ -166,7 +175,7 @@ impl RsyncClient {
         let _random_seed = read.read_u32().await?; // Read random seed - we don't care
         Ok(())
     }
-    async fn read_file_list<T: AsyncRead + Unpin + Send>(read: &mut T) -> Result<Vec<File>> {
+    async fn read_file_list<T: AsyncRead + Unpin + Send>(read: &mut T, client_id: usize) -> Result<Vec<File>> {
         let mut ret = vec![];
         let mut filename_buf: Vec<u8> = vec![];
         let mut mode_buf = None;
@@ -219,7 +228,7 @@ impl RsyncClient {
             let f = File {
                 path: filename_buf.clone(),
                 mtime: mtime_buf,
-                symlink, mode, size, idx,
+                symlink, mode, size, idx, client_id,
             };
             println!("{}", f);
             ret.push(f);
@@ -241,17 +250,29 @@ type Enveloped = EnvelopeRead<BufReader<OwnedReadHalf>>;
 struct ReadFilesProcess {
     read: Enveloped,
     reqs: Requests,
+    current: Option<mpsc::Sender<Result<Bytes, tokio::io::Error>>>,
 }
 
 impl ReadFilesProcess {
     async fn run(mut self) -> Result<Enveloped> {
         let res = self.process().await;
         println!("Client exiting");
+        use tokio::io::{ Error, ErrorKind };
         let remaining = self.reqs.lock().unwrap().take();
+        // TODO: When switching away from anyhow, make sure our error type is cloneable - and send
+        // the real error.
+        let cex = |msg: &str| Err(Error::new(ErrorKind::ConnectionAborted, anyhow::anyhow!("{}", msg)));
+        if let Some(mut current) = self.current.take() {
+            if res.is_err() {
+                current.send(cex("Client exited while reading file")).await.ok();
+            } else {
+                current.send(cex("Internal panic!")).await.ok();
+                unreachable!();
+            }
+        };
         for (_, cs) in remaining.unwrap().into_iter() {
             for mut c in cs.into_iter() {
-                use tokio::io::{ Error, ErrorKind };
-                c.send(Err(Error::new(ErrorKind::ConnectionAborted, anyhow::anyhow!("Client exited")))).await.ok();
+                c.send(cex("Client exited")).await.ok();
             }
         }
         res?;
@@ -260,6 +281,11 @@ impl ReadFilesProcess {
     async fn process(&mut self) -> Result<()> {
         loop {
             let idx = self.read.read_i32_le().await?;
+            // TODO: according to openrsync's rsync.5, requested indexes may be
+            // 1. reordered
+            // 2. silently skipped
+            // So I may need some nifty logic to recognize that a file won't be sent...
+            // (For now, library users will have to close() to get their files to "time out".)
             if idx == -1 {
                 break Ok(());
             }
@@ -269,13 +295,13 @@ impl ReadFilesProcess {
                 anyhow::ensure!(buf == [0u8; 16], "Protocol error: we requested a plain file, not blocks and checksums");
             }
             let idx = idx as usize;
-            let mut backchan = {
+            self.current = {
                 let mut table = self.reqs.lock().unwrap();
                 let table = table.as_mut().unwrap();
                 let mut reqs = table.get_mut(&idx);
                 let req = reqs.as_mut().and_then(|v| v.pop()).context("Got file - no memory of requesting it")?;
                 if reqs.map(|v| v.len()) == Some(0) { table.remove(&idx).unwrap(); }
-                req
+                Some(req)
             };
             loop {
                 let chunklen = self.read.read_i32_le().await?;
@@ -284,18 +310,24 @@ impl ReadFilesProcess {
                 }
                 anyhow::ensure!(chunklen > 0, "Protocol error: negative sized chunk");
                 let mut chunklen = chunklen as usize;
-                // TODO: send to current chan
                 while chunklen > 0 {
                     let read = std::cmp::min(1 << 16, chunklen);
                     let mut buf = BytesMut::with_capacity(read);
                     chunklen -= self.read.read_buf(&mut buf).await?;
-                    backchan.send(Ok(buf.into())).await?;
+                    if let Some(backchan) = self.current.as_mut() {
+                        //println!("Got chunk {}", buf.len());
+                        if let Err(_e) = backchan.send(Ok(buf.into())).await {
+                            self.current = None;
+                            // TODO: log! println!("Internal error while receiving file: {}", _e);
+                        }
+                    }
                 }
             }
             { // Hash. TODO: check
                 let mut buf = [0u8; 16];
                 self.read.read_exact(&mut buf).await?;
             }
+            self.current = None; // Drop sender, finalizing internal transfer
         }
     }
 }
@@ -303,11 +335,18 @@ impl ReadFilesProcess {
 pub struct File {
     pub path: Vec<u8>,
     pub symlink: Option<Vec<u8>>,
-    /// e.g. unix_mode is useful for parsing
-    pub mode: u32,
+    mode: u32,
     pub size: u64,
     pub mtime: Option<DateTime<Utc>>,
     idx: usize,
+    client_id: usize,
+}
+impl File {
+    /// e.g. the unix_mode crate is useful for parsing
+    pub fn unix_mode(&self) -> u32 { self.mode }
+    pub fn is_file(&self) -> bool { unix_mode::is_file(self.mode) }
+    pub fn is_directory(&self) -> bool { unix_mode::is_dir(self.mode) }
+    pub fn is_symlink(&self) -> bool { unix_mode::is_symlink(self.mode) }
 }
 impl std::fmt::Display for File {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
@@ -424,7 +463,6 @@ trait RsyncReadExt: AsyncRead + Unpin {
 }
 impl<T: tokio::io::AsyncRead + Unpin> RsyncReadExt for T {}
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -433,6 +471,7 @@ mod tests {
     async fn it_works() {
         let url = url::Url::parse("rsync://cameo/ftp").unwrap();
         let (mut cli, files) = RsyncClient::connect(url).await.unwrap();
+        cli.get(&files[2]).await.unwrap();
         let mut req = BufReader::new(cli.get(&files[4]).await.unwrap());
         let mut buf = vec![];
         req.read_to_end(&mut buf).await.unwrap();
@@ -441,9 +480,7 @@ mod tests {
         let mut buf = vec![];
         req.read_to_end(&mut buf).await.unwrap();
         hexdump::hexdump(&buf);
-        let mut req = BufReader::new(cli.get(&files[2]).await.unwrap());
-        let mut buf = vec![];
-        req.read_to_end(&mut buf).await.unwrap();
+        cli.get(&files[2]).await.unwrap();
         println!("{:?}", cli.close().await.unwrap());
     }
 }
