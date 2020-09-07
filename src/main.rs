@@ -15,6 +15,7 @@ mod tomfs;
 mod fromftp;
 mod fromfile;
 mod fromhttp;
+mod fromrsync;
 mod nabla;
 #[cfg(test)]
 mod globtest;
@@ -85,7 +86,7 @@ async fn main() -> Result<()> {
 
 async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<()> {
 	let settings = out.settings();
-	let suite = suite::make(&opts, &settings)?;
+	let mut suite = suite::make(&opts, &settings)?;
 
 	let current_set = out.prepare().await
 		.with_context(|| format!("Failed to prepare mfs target folder in {:?} (and read current data state from {:?})", settings.workdir.as_ref().unwrap(), &settings.target))?;

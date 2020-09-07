@@ -42,6 +42,8 @@ walkdir = "2.3.1"
 pathdiff = "0.2.0"
 reqwest = { version = "0.10", features = ["gzip", "brotli", "stream"] }
 select = "0.5"
+arrsync = { path = "crates/arrsync", version = "0" }
+tokio-util = { version = "0.3", features = ["compat"] }
 
 [dev-dependencies]
 libunftp = "0.11.0"
@@ -52,4 +54,5 @@ unmemftp = { path = "crates/unmemftp" }
 members = [
 	"crates/unmemftp",
 	"crates/mfs",
+	"crates/arrsync",
 ]

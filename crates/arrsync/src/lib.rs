@@ -66,7 +66,7 @@ impl RsyncClient {
         };
         Ok((RsyncClient { inner: Arc::new(inner) }, files))
     }
-    pub async fn get(&mut self, file: &File) -> Result<impl AsyncRead> {
+    pub async fn get(&self, file: &File) -> Result<impl AsyncRead> {
         anyhow::ensure!(self.inner.id == file.client_id, "Requested file from client that was not listed in that client's connect call");
         anyhow::ensure!(file.is_file(), "Can only request files, {} is not", file);
         let (data_send, data_recv) = mpsc::channel(10);
@@ -332,6 +332,7 @@ impl ReadFilesProcess {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct File {
     pub path: Vec<u8>,
     pub symlink: Option<Vec<u8>>,

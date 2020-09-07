@@ -35,7 +35,7 @@ impl crate::suite::Suite for Suite {
 	async fn provider(&self) -> Result<Box<dyn Provider>> {
 		Ok(Box::new(HttpProvider { base: self.source.clone(), client: Suite::client() }))
 	}
-	async fn recurse(&self, ignore: Gitignore) -> Result<SyncInfo> {
+	async fn recurse(&mut self, ignore: Gitignore) -> Result<SyncInfo> {
         spider::Spider::new(Suite::client(), self.source.clone(), ignore).run().await
 	}
 }
