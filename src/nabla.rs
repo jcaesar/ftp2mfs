@@ -97,7 +97,7 @@ where
 	S: serde::Serializer, V: Serialize,
 {
 	let mut value: Vec<(&PathBuf, &V)> = value.iter().collect();
-	value.sort_by(|(k1, _), (k2, _)| human_sort::compare(&k1.to_string_lossy(), &k2.to_string_lossy()));
+	value.sort_by(|(k1, _), (k2, _)| k1.cmp(&k2));
 	use serde::ser::SerializeMap;
 	let mut map = serializer.serialize_map(Some(value.len()))?;
 	for (k, v) in value.iter() {
