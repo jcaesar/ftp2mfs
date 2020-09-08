@@ -47,7 +47,7 @@ impl RsyncClient {
         let (read, mut write) = Self::stream(&url).await?;
         let mut read = BufReader::new(read);
         Self::send_handshake(&mut write, path, base).await?;
-        Self::read_handshake(&mut read).await?;
+        Self::read_handshake(&mut read, &url.origin().unicode_serialization()).await?;
         let mut read = EnvelopeRead::new(read); // Server multiplex start
         let id = NEXT_CLIENT_ID.fetch_add(1, AtomicOrder::SeqCst);
         let files = Self::read_file_list(&mut read, id).await?;
@@ -92,6 +92,7 @@ impl RsyncClient {
                 bytes_written: read.read_rsync_long().await?,
                 file_size: read.read_rsync_long().await?,
             };
+            log::debug!("Rsync Stats: {:?}", stats);
             write.write_i32_le(-1).await?; // EoS
             write.shutdown();
             Ok(stats)
@@ -155,7 +156,7 @@ impl RsyncClient {
         write.write_all(&initial).await?;
         Ok(())
     }
-    async fn read_handshake<T: AsyncBufRead + Unpin>(read: &mut T) -> Result<()> {
+    async fn read_handshake<T: AsyncBufRead + Unpin>(read: &mut T, origin: &str) -> Result<()> {
         let hello = &mut String::new();
         read.read_line(hello)
             .await.context("Read server hello")?;
@@ -180,7 +181,7 @@ impl RsyncClient {
             }
         }
         if &motd != "" {
-            print!("{}", motd);
+            log::info!("MOTD from {}\n{}", origin, motd);
         }
         let _random_seed = read.read_u32().await?; // Read random seed - we don't care
         Ok(())
@@ -240,7 +241,6 @@ impl RsyncClient {
                 mtime: mtime_buf,
                 symlink, mode, size, idx, client_id,
             };
-            println!("{}", f);
             ret.push(f);
         }
         let io_err = read.read_i32_le().await?;
@@ -249,6 +249,7 @@ impl RsyncClient {
         // Hmm. rsyn also dedupes. I've never seen dupes, so I don't know why.
         for (i, mut f) in ret.iter_mut().enumerate() {
             f.idx = i;
+            log::debug!("{:>6} {}", f.idx, f);
         }
         Ok(ret)
     }
@@ -266,7 +267,7 @@ struct ReadFilesProcess {
 impl ReadFilesProcess {
     async fn run(mut self) -> Result<Enveloped> {
         let res = self.process().await;
-        println!("Client exiting");
+        log::debug!("Client exiting: {:?}", res);
         use tokio::io::{ Error, ErrorKind };
         let remaining = self.reqs.lock().unwrap().take();
         // TODO: When switching away from anyhow, make sure our error type is cloneable - and send
@@ -299,6 +300,7 @@ impl ReadFilesProcess {
             if idx == -1 {
                 break Ok(());
             }
+            log::debug!("Receiving file {}", idx);
             { // block info
                 let mut buf = [0u8; 16];
                 self.read.read_exact(&mut buf).await?;
@@ -313,6 +315,7 @@ impl ReadFilesProcess {
                 if reqs.map(|v| v.len()) == Some(0) { table.remove(&idx).unwrap(); }
                 Some(req)
             };
+            let mut size: usize = 0;
             loop {
                 let chunklen = self.read.read_i32_le().await?;
                 if chunklen == 0 {
@@ -320,15 +323,16 @@ impl ReadFilesProcess {
                 }
                 anyhow::ensure!(chunklen > 0, "Protocol error: negative sized chunk");
                 let mut chunklen = chunklen as usize;
+                size += chunklen;
                 while chunklen > 0 {
                     let read = std::cmp::min(1 << 16, chunklen);
                     let mut buf = BytesMut::with_capacity(read);
                     chunklen -= self.read.read_buf(&mut buf).await?;
                     if let Some(backchan) = self.current.as_mut() {
-                        //println!("Got chunk {}", buf.len());
+                        log::trace!("File {}: got part {}, {} remaining in chunk", idx, buf.len(), chunklen);
                         if let Err(_e) = backchan.send(Ok(buf.into())).await {
                             self.current = None;
-                            // TODO: log! println!("Internal error while receiving file: {}", _e);
+                            log::warn!("Internal close while receiving file: {} - ignoring", _e);
                         }
                     }
                 }
@@ -336,6 +340,7 @@ impl ReadFilesProcess {
             { // Hash. TODO: check
                 let mut buf = [0u8; 16];
                 self.read.read_exact(&mut buf).await?;
+                log::debug!("Finished {} successfully, {} B, checksum {:?} not checked", idx, size, buf);
             }
             self.current = None; // Drop sender, finalizing internal transfer
         }
@@ -424,7 +429,7 @@ impl<T: tokio::io::AsyncBufRead + Unpin> AsyncRead for EnvelopeRead<T> {
                         let b1 = *b1 as u32; let b2 = *b2 as u32; let b3 = *b3 as u32; let b4 = *b4 as u32;
                         Pin::new(&mut self.read).consume(4);
                         self.frame_remaining = b1 + b2 * 0x100 + b3 * 0x100_00;
-                        println!("Frame {}", self.frame_remaining);
+                        log::trace!("Frame {}", self.frame_remaining);
                         match b4 {
                             7 => (),
                             1 => {
