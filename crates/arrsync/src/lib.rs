@@ -429,33 +429,30 @@ impl<T: tokio::io::AsyncBufRead + Unpin> AsyncRead for EnvelopeRead<T> {
         if self.pending_error.is_some() {
             return self.poll_err(ctx, buf);
         }
-        if self.frame_remaining == 0 {
-            loop {
-                let pll = Pin::new(&mut self.read).poll_fill_buf(ctx);
-                match pll {
-                    // Starting to wonder whether it wouldn't be easier to store the future
-                    // returend from read_u32_le
-                    Poll::Pending => return Poll::Pending,
-                    Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                    Poll::Ready(Ok([])) => return Poll::Ready(Ok(0)),
-                    Poll::Ready(Ok([b1, b2, b3, b4, ..])) => {
-                        let b1 = *b1 as usize; let b2 = *b2 as usize; let b3 = *b3 as usize; let b4 = *b4;
-                        Pin::new(&mut self.read).consume(4);
-                        self.frame_remaining = b1 + b2 * 0x100 + b3 * 0x100_00;
-                        log::trace!("Frame {}", self.frame_remaining);
-                        match b4 {
-                            7 => (),
-                            t => {
-                                let mut errbuf = vec![];
-                                errbuf.resize(self.frame_remaining, 0);
-                                self.pending_error = Some((t, errbuf));
-                                return self.poll_err(ctx, buf);
-                            }
-                        };
-                        break;
-                    },
-                    Poll::Ready(Ok(_)) => continue,
-                }
+        while self.frame_remaining == 0 {
+            let pll = Pin::new(&mut self.read).poll_fill_buf(ctx);
+            match pll {
+                // Starting to wonder whether it wouldn't be easier to store the future returend by read_u32_le
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Ready(Ok([])) => return Poll::Ready(Ok(0)),
+                Poll::Ready(Ok([b1, b2, b3, b4, ..])) => {
+                    let b1 = *b1 as usize; let b2 = *b2 as usize; let b3 = *b3 as usize; let b4 = *b4;
+                    Pin::new(&mut self.read).consume(4);
+                    self.frame_remaining = b1 + b2 * 0x100 + b3 * 0x100_00;
+                    log::trace!("Frame {}", self.frame_remaining);
+                    match b4 {
+                        7 => (),
+                        t => {
+                            let mut errbuf = vec![];
+                            errbuf.resize(self.frame_remaining, 0);
+                            self.pending_error = Some((t, errbuf));
+                            return self.poll_err(ctx, buf);
+                        }
+                    };
+                    break;
+                },
+                Poll::Ready(Ok(_)) => continue,
             }
         }
         let request = std::cmp::min(buf.len(), self.frame_remaining as usize);
