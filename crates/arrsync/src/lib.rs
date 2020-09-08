@@ -42,7 +42,7 @@ pub struct Stats {
 }
 
 impl RsyncClient {
-    pub async fn connect(url: url::Url) -> Result<(RsyncClient, Vec<File>)> {
+    pub async fn connect(url: &url::Url) -> Result<(RsyncClient, Vec<File>)> {
         let (path, base) = Self::parse_url(&url)?;
         let (read, mut write) = Self::stream(&url).await?;
         let mut read = BufReader::new(read);

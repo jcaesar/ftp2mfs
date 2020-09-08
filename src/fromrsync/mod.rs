@@ -25,7 +25,7 @@ impl crate::suite::Suite for Suite {
 		Ok(Box::new(self.clone()))
 	}
 	async fn recurse(&mut self, ignore: Gitignore) -> Result<SyncInfo> {
-        let (client, files) = arrsync::RsyncClient::connect(self.source.clone()) // TODO: noclone
+        let (client, files) = arrsync::RsyncClient::connect(&self.source)
             .await.context("Connect to rsync server")?;
         self.client = Some(client);
         let mut ret = SyncInfo::new();
