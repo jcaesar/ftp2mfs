@@ -5,7 +5,7 @@ use std::path::{ Path, PathBuf };
 use ignore::gitignore::Gitignore;
 use url::Url;
 use futures::AsyncRead;
-use std::collections::HashMap;
+use std::collections::{ HashMap, HashSet };
 use std::sync::{ Arc, Mutex };
 
 #[derive(Clone)]
@@ -30,14 +30,28 @@ impl crate::suite::Suite for Suite {
         self.client = Some(client);
         let mut ret = SyncInfo::new();
         let mut path_lookup = self.files.lock().unwrap();
-        for file in files.into_iter().filter(arrsync::File::is_file) {
-            let path = Path::new(std::str::from_utf8(&file.path).context("TODO: don't use Path")?);
+        let vu8path = |vu8| std::str::from_utf8(vu8).context("Non UTF-8 path").map(Path::new);
+        let ignored_folders: HashSet<&Path> = files.iter()
+            .filter(|file| file.is_directory())
+            .map(|file| vu8path(&file.path))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|path| ignore.matched(path, true).is_ignore())
+            .collect::<HashSet<_>>();
+        for file in files.iter().filter(|f| f.is_file()) {
+            let path = vu8path(&file.path)?;
+            if ignore.matched(path, false).is_ignore() {
+                continue;
+            }
+            if path.ancestors().any(|anc| ignored_folders.contains(anc)) {
+                continue;
+            }
             ret.files.insert(path.to_owned(), FileInfo {
                 t: file.mtime,
                 s: Some(file.size as usize),
                 deleted: None
             });
-            path_lookup.insert(path.to_owned(), file);
+            path_lookup.insert(path.to_owned(), file.clone());
         }
         Ok(ret)
 	}
