@@ -47,7 +47,7 @@ impl RsyncClient {
         let (read, mut write) = Self::stream(&url).await?;
         let mut read = BufReader::new(read);
         Self::send_handshake(&mut write, path, base).await?;
-        Self::read_handshake(&mut read, base).await?;
+        Self::read_handshake(&mut read).await?;
         let mut read = EnvelopeRead::new(read); // Server multiplex start
         let id = NEXT_CLIENT_ID.fetch_add(1, AtomicOrder::SeqCst);
         let files = Self::read_file_list(&mut read, id).await?;
@@ -155,7 +155,7 @@ impl RsyncClient {
         write.write_all(&initial).await?;
         Ok(())
     }
-    async fn read_handshake<T: AsyncBufRead + Unpin>(read: &mut T, base: &str) -> Result<()> {
+    async fn read_handshake<T: AsyncBufRead + Unpin>(read: &mut T) -> Result<()> {
         let hello = &mut String::new();
         read.read_line(hello)
             .await.context("Read server hello")?;
@@ -168,10 +168,20 @@ impl RsyncClient {
         anyhow::ensure!(ver >= vec![27, 0], "Server version {} not supported - need 27.0 minimum.",
             ver.iter().map(|i| format!("{}", i)).collect::<Vec<_>>().join(".")
         );
-        let select = &mut String::new();
-        read.read_line(select)
-            .await.context("Read server startup")?;
-        anyhow::ensure!(select == &format!("{}OK\n", rsyncd), "Could not select {}: {}", base, select);
+        let mut motd = String::new();
+        loop {
+            let select = &mut String::new();
+            read.read_line(select)
+                .await.context("Read server startup")?;
+            if select == &format!("{}OK\n", rsyncd) {
+                break;
+            } else {
+                motd += select;
+            }
+        }
+        if &motd != "" {
+            print!("{}", motd);
+        }
         let _random_seed = read.read_u32().await?; // Read random seed - we don't care
         Ok(())
     }
