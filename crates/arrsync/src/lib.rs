@@ -181,7 +181,7 @@ impl RsyncClient {
             }
         }
         if &motd != "" {
-            log::info!("MOTD from {}\n{}", origin, motd);
+            log::info!("MOTD from {}\n{}", origin, motd.strip_suffix("\n").unwrap_or(&motd));
         }
         let _random_seed = read.read_u32().await?; // Read random seed - we don't care
         Ok(())
@@ -243,8 +243,9 @@ impl RsyncClient {
             };
             ret.push(f);
         }
-        let io_err = read.read_i32_le().await?;
-        anyhow::ensure!(io_err == 0, "Protocol error: expected 0 IO errors, got {}.", io_err);
+        if read.read_i32_le().await? != 0 {
+            log::warn!("IO errors while listing files.");
+        }
         ret.sort_unstable_by(|a, b| a.path.cmp(&b.path));
         // Hmm. rsyn also dedupes. I've never seen dupes, so I don't know why.
         for (i, mut f) in ret.iter_mut().enumerate() {
@@ -379,30 +380,42 @@ impl std::fmt::Display for File {
 
 struct EnvelopeRead<T: tokio::io::AsyncBufRead + Unpin> {
     read: T,
-    frame_remaining: u32,
-    pending_error: Option<String>,
+    frame_remaining: usize,
+    pending_error: Option<(u8, Vec<u8>)>,
 }
 
 impl<T: tokio::io::AsyncBufRead + Unpin> EnvelopeRead<T> {
     fn new(t: T) -> EnvelopeRead<T> { EnvelopeRead { read: t, frame_remaining: 0, pending_error: None } }
 
-    fn poll_err(mut self: Pin<&mut Self>, ctx: &mut std::task::Context<'_>)
+    fn poll_err(mut self: Pin<&mut Self>, ctx: &mut std::task::Context<'_>, repoll_buf: &mut [u8])
         -> Poll<Result<usize, std::io::Error>>
     {
-        let mut pe = self.pending_error.clone().expect("Error expected, but not present");
-        while self.frame_remaining > 0 && pe.len() < 1 << 14 {
-            let buf = &mut [0u8; 256];
-            match Pin::new(&mut self.read).poll_read(ctx, buf) {
+        while self.frame_remaining > 0 {
+            let mut pe = self.pending_error.as_ref().expect("Error expected, but not present").1.clone();
+            let pei = pe.len() - self.frame_remaining; // Ich check dich wek alter bowwochecka
+            match Pin::new(&mut self.read).poll_read(
+                ctx, &mut pe[pei..]
+            ) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
                 Poll::Ready(Ok(0)) => break,
                 Poll::Ready(Ok(r)) => {
-                    pe += &String::from_utf8_lossy(&buf[..r]);
-                    self.pending_error = Some(pe.clone());
+                    self.frame_remaining -= r;
+                    self.pending_error.as_mut().unwrap().1 = pe;
                 },
             };
         }
-        let e = anyhow::anyhow!("{}", pe);
+        let (typ, msg) = self.pending_error.take().unwrap();
+        let msg = String::from_utf8_lossy(&msg);
+        let msg = msg.strip_suffix("\n").filter(|msg| msg.matches("\n").count() == 0).unwrap_or(&msg).to_owned();
+        let e = match typ {
+            8 => {
+                log::warn!("Sender: {}", msg);
+                return self.poll_read(ctx, repoll_buf);
+            },
+            1 => anyhow::anyhow!("Server error: {}", msg),
+            t => anyhow::anyhow!("Unknown error {}: {}", t, msg),
+        };
         return Poll::Ready(Err(
             std::io::Error::new(std::io::ErrorKind::ConnectionAborted, e)
         ));
@@ -414,7 +427,7 @@ impl<T: tokio::io::AsyncBufRead + Unpin> AsyncRead for EnvelopeRead<T> {
         -> Poll<Result<usize, std::io::Error>>
     {
         if self.pending_error.is_some() {
-            return self.poll_err(ctx);
+            return self.poll_err(ctx, buf);
         }
         if self.frame_remaining == 0 {
             loop {
@@ -426,19 +439,17 @@ impl<T: tokio::io::AsyncBufRead + Unpin> AsyncRead for EnvelopeRead<T> {
                     Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
                     Poll::Ready(Ok([])) => return Poll::Ready(Ok(0)),
                     Poll::Ready(Ok([b1, b2, b3, b4, ..])) => {
-                        let b1 = *b1 as u32; let b2 = *b2 as u32; let b3 = *b3 as u32; let b4 = *b4 as u32;
+                        let b1 = *b1 as usize; let b2 = *b2 as usize; let b3 = *b3 as usize; let b4 = *b4;
                         Pin::new(&mut self.read).consume(4);
                         self.frame_remaining = b1 + b2 * 0x100 + b3 * 0x100_00;
                         log::trace!("Frame {}", self.frame_remaining);
                         match b4 {
                             7 => (),
-                            1 => {
-                                self.pending_error = Some(format!("Server error: "));
-                                return self.poll_err(ctx);
-                            },
                             t => {
-                                self.pending_error = Some(format!("Unknown frame type {}: ", t));
-                                return self.poll_err(ctx);
+                                let mut errbuf = vec![];
+                                errbuf.resize(self.frame_remaining, 0);
+                                self.pending_error = Some((t, errbuf));
+                                return self.poll_err(ctx, buf);
                             }
                         };
                         break;
@@ -449,7 +460,7 @@ impl<T: tokio::io::AsyncBufRead + Unpin> AsyncRead for EnvelopeRead<T> {
         }
         let request = std::cmp::min(buf.len(), self.frame_remaining as usize);
         Pin::new(&mut self.read).poll_read(ctx, &mut buf[0..request])
-            .map(|r| r.map(|r| { self.frame_remaining -= r as u32; r }))
+            .map(|r| r.map(|r| { self.frame_remaining -= r; r }))
     }
 }
 
