@@ -431,29 +431,45 @@ impl<T: tokio::io::AsyncBufRead + Unpin> AsyncRead for EnvelopeRead<T> {
             return self.poll_err(ctx, buf);
         }
         while self.frame_remaining == 0 {
+            let no_pending_header = self.pending_header.is_none();
             let pll = Pin::new(&mut self.read).poll_fill_buf(ctx);
             match pll {
                 // Starting to wonder whether it wouldn't be easier to store the future returend by read_u32_le
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                Poll::Ready(Ok([])) => return Poll::Ready(Ok(0)),
-                Poll::Ready(Ok([b1, b2, b3, b4, ..])) => {
-                    let b1 = *b1 as usize; let b2 = *b2 as usize; let b3 = *b3 as usize; let b4 = *b4;
-                    Pin::new(&mut self.read).consume(4);
-                    self.frame_remaining = b1 + b2 * 0x100 + b3 * 0x100_00;
-                    log::trace!("Frame {}", self.frame_remaining);
-                    match b4 {
-                        7 => (),
-                        t => {
-                            let mut errbuf = vec![];
-                            errbuf.resize(self.frame_remaining, 0);
-                            self.pending_error = Some((t, errbuf));
-                            return self.poll_err(ctx, buf);
-                        }
-                    };
-                    break;
+                Poll::Ready(Ok([])) if no_pending_header => return Poll::Ready(Ok(0)),
+                Poll::Ready(Ok([])) => return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionAborted,
+                    anyhow::anyhow!("Abort during header read")),
+                )),
+                Poll::Ready(Ok(slice)) => {
+                    let slicehead = &mut [0u8; 4];
+                    let consumable = std::cmp::min(slice.len(), 4);
+                    slicehead[..consumable].copy_from_slice(&slice[..consumable]);
+                    let (mut ph, phl) = self.pending_header.take().unwrap_or(([0u8; 4], 0));
+                    let phl = phl as usize;
+                    let consumable = std::cmp::min(ph.len() - phl, consumable);
+                    ph[phl..(phl + consumable)].copy_from_slice(&slicehead[..consumable]);
+                    let phl = phl + consumable;
+                    Pin::new(&mut self.read).consume(consumable);
+                    if phl < ph.len()  {
+                        self.pending_header = Some((ph, phl as u8));
+                    } else {
+                        let [b1, b2, b3, b4] = ph;
+                        let b1 = b1 as usize; let b2 = b2 as usize; let b3 = b3 as usize;
+                        self.frame_remaining = b1 + b2 * 0x100 + b3 * 0x100_00 as usize;
+                        log::trace!("Frame {} {}", b4, self.frame_remaining);
+                        match b4 {
+                            7 => (),
+                            t => {
+                                let mut errbuf = vec![];
+                                errbuf.resize(self.frame_remaining, 0);
+                                self.pending_error = Some((t, errbuf));
+                                return self.poll_err(ctx, buf);
+                            }
+                        };
+                    }
                 },
-                Poll::Ready(Ok(_)) => continue,
             }
         }
         let request = std::cmp::min(buf.len(), self.frame_remaining as usize);
