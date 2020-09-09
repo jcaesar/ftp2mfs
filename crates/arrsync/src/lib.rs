@@ -327,8 +327,9 @@ impl ReadFilesProcess {
                 size += chunklen;
                 while chunklen > 0 {
                     let read = std::cmp::min(1 << 16, chunklen);
-                    let mut buf = BytesMut::with_capacity(read);
-                    chunklen -= self.read.read_buf(&mut buf).await?;
+                    let mut buf = BytesMut::new();
+                    buf.resize(read, 0);
+                    chunklen -= self.read.read_exact(&mut buf).await?;
                     if let Some(backchan) = self.current.as_mut() {
                         log::trace!("File {}: got part {}, {} remaining in chunk", idx, buf.len(), chunklen);
                         if let Err(_e) = backchan.send(Ok(buf.into())).await {
