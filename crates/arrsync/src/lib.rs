@@ -1,5 +1,41 @@
+//! A tokio-based, rust only, self baked, partial rsync wire protocol implementation for retrieving
+//! files from rsyncd servers.
+//!
+//! Quick example:
+//! ```
+//! // Print all the Manifest files for gentoo ebuilds
+//! #[tokio::main]
+//! async fn main() -> anyhow::Result<()> {
+//!     let url = url::Url::parse("rsync://rsync.de.gentoo.org/gentoo-portage/")?;
+//!     let (mut client, files) = arrsync::RsyncClient::connect(&url).await?;
+//!     for file in files.into_iter() {
+//!         if !file.is_file() {
+//!             continue;
+//!         }
+//!         if !file.path.ends_with("/Manifest".as_bytes()) {
+//!             continue;
+//!         }
+//!         async fn get_and_print(
+//!             file: arrsync::File,
+//!             client: arrsync::RsyncClient
+//!         ) -> anyhow::Result<()> {
+//!             use tokio::io::AsyncReadExt;
+//!             let mut content = vec![];
+//!             client.get(&file).await?.read_to_end(&mut content).await?;
+//!             // "Race" to finish. Ignored for simplicity reasons.
+//!             print!("{}", String::from_utf8(content)?);
+//!             Ok(())
+//!         }
+//!         tokio::spawn(get_and_print(file, client.clone()));
+//!     }
+//!     client.close().await?;
+//!     Ok(())
+//! }
+//! ```
+//!
+//! Beware that rsync is, of course, unencrypted.
+
 use tokio::net::TcpStream;
-//type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 use anyhow::{ Result, Context };
 use tokio::io::AsyncWriteExt;
 use std::path::Path;
@@ -22,6 +58,7 @@ use std::sync::atomic::{ AtomicUsize, Ordering as AtomicOrder };
 static NEXT_CLIENT_ID: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Clone)]
+/// The main client struct
 pub struct RsyncClient {
     inner: Arc<RsyncClientInner>
 }
@@ -33,15 +70,23 @@ struct RsyncClientInner {
     id: usize,
 }
 
-/// read/written as viewed by server(?)
+
 #[derive(Clone, Debug)]
+/// Connection statistics provided by server
 pub struct Stats {
-    bytes_read: i64,
-    bytes_written: i64,
-    file_size: i64
+    /// Bytes sent by us
+    pub bytes_read: i64,
+    /// Bytes sent by the server/sender
+    pub bytes_written: i64,
+    /// Total size of files on the server.
+    /// (Since this client knows nothing of exclusion lists, you can also calculate this from the file list.)
+    pub file_size: i64
 }
 
 impl RsyncClient {
+    /// Open a connection to an rsync server and read the initial file list.
+    /// The url must have scheme `rsync` and contain at least one path element (module listing is
+    /// not supported).
     pub async fn connect(url: &url::Url) -> Result<(RsyncClient, Vec<File>)> {
         let (path, base) = Self::parse_url(&url)?;
         let (read, mut write) = Self::stream(&url).await?;
@@ -66,6 +111,17 @@ impl RsyncClient {
         };
         Ok((RsyncClient { inner: Arc::new(inner) }, files))
     }
+    /// Requests the transfer of a [File](crate::File).
+    /// The referenced File must have been returned in the same call as `self`, or an error will be
+    /// returned.
+    ///
+    /// There are some worrying remarks in the rsync protocol documentation in openrsync.
+    /// It is stated that requested files may be silently ommited from transfer,
+    /// and that files are not necessarily transmited in the order they were requested.
+    /// Effectively, this means that the only way to detect that a file wasn't sent is to invoke
+    /// [close](crate::RsyncClient::close), and then to wait for the sender to signal the end of the
+    /// connection. Without calling close, the returned [AsyncRead](crate::AsyncRead) may remain
+    /// pending forever.
     pub async fn get(&self, file: &File) -> Result<impl AsyncRead> {
         anyhow::ensure!(self.inner.id == file.client_id, "Requested file from client that was not listed in that client's connect call");
         anyhow::ensure!(file.is_file(), "Can only request files, {} is not", file);
@@ -77,10 +133,14 @@ impl RsyncClient {
             .or_insert(vec![])
             .push(data_send);
         let mut write = self.inner.write.lock().await;
+        log::debug!("Requesting index {}: {}", file.idx, file);
         write.write_i32_le(file.idx as i32).await?;
         write.write_all(&[0u8; 16]).await?; // We want no blocks, blocklength, checksum, or terminal block. 4 x 0i32 = 16
         Ok(tokio::io::stream_reader(data_recv))
     }
+    /// Finalizes the connection and returns statistics about the transfer (See [Stats](crate::Stats)).
+    /// All files that have allready been requested will be transferred before the returned future completes.
+    /// Only one call to this function can succeed per [RsyncClient](crate::RsyncClient).
     pub async fn close(&mut self) -> Result<Stats> {
         let read = self.inner.finish.lock().unwrap().take();
         if let Some(read) = read {
@@ -290,6 +350,7 @@ impl ReadFilesProcess {
         res?;
         Ok(self.read)
     }
+    /// Phase 2 file receiver
     async fn process(&mut self) -> Result<()> {
         loop {
             let idx = self.read.read_i32_le().await?;
@@ -350,23 +411,36 @@ impl ReadFilesProcess {
 }
 
 #[derive(Clone, Debug)]
+/// Information about a file on the rsync server
 pub struct File {
+    /// Path as returned by the server
+    /// Take care to normalize it
     pub path: Vec<u8>,
+    /// Symlink target, if [is_symlink](crate::File::is_symlink)
     pub symlink: Option<Vec<u8>>,
     mode: u32,
+    /// File size in bytes
     pub size: u64,
+    /// Modification time. Range is limited as it is parsed from an i32
     pub mtime: Option<DateTime<Utc>>,
+    /// Position in file list
     idx: usize,
+    /// Since a different client may have a different file list and files are requested by index,
+    /// not by path, we must ensure that files and clients don't get mixed.
     client_id: usize,
 }
 impl File {
-    /// e.g. the unix_mode crate is useful for parsing
+    /// e.g. the `unix_mode` crate is useful for parsing
     pub fn unix_mode(&self) -> u32 { self.mode }
+    /// A regular file?
     pub fn is_file(&self) -> bool { unix_mode::is_file(self.mode) }
+    /// A directory?
     pub fn is_directory(&self) -> bool { unix_mode::is_dir(self.mode) }
+    /// A symlink? `symlink` will be `Some`.
     pub fn is_symlink(&self) -> bool { unix_mode::is_symlink(self.mode) }
 }
 impl std::fmt::Display for File {
+    /// Print as if we're doing `ls -l`
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         write!(fmt, "{} {:>12} {} {}{}",
             unix_mode::to_string(self.mode),
@@ -379,14 +453,17 @@ impl std::fmt::Display for File {
     }
 }
 
+/// Strips rsync data frame headers and prints non-data frames as warning messages
 struct EnvelopeRead<T: tokio::io::AsyncBufRead + Unpin> {
+    // TODO: rebuild with an enum of pending body, pending error, and pending header
     read: T,
     frame_remaining: usize,
     pending_error: Option<(u8, Vec<u8>)>,
+    pending_header: Option<([u8; 4], u8)>
 }
 
 impl<T: tokio::io::AsyncBufRead + Unpin> EnvelopeRead<T> {
-    fn new(t: T) -> EnvelopeRead<T> { EnvelopeRead { read: t, frame_remaining: 0, pending_error: None } }
+    fn new(t: T) -> EnvelopeRead<T> { EnvelopeRead { read: t, frame_remaining: 0, pending_error: None, pending_header: None } }
 
     fn poll_err(mut self: Pin<&mut Self>, ctx: &mut std::task::Context<'_>, repoll_buf: &mut [u8])
         -> Poll<Result<usize, std::io::Error>>
@@ -478,6 +555,7 @@ impl<T: tokio::io::AsyncBufRead + Unpin> AsyncRead for EnvelopeRead<T> {
     }
 }
 
+/// Rsync's file list entry "header"
 struct FileEntryStatus(u8);
 impl FileEntryStatus {
     fn is_end(&self) -> bool { self.0 == 0 }
@@ -493,6 +571,7 @@ impl FileEntryStatus {
 
 #[async_trait::async_trait] 
 trait RsyncReadExt: AsyncRead + Unpin {
+    /// For reading rsync's variable length integers… quite an odd format.
     async fn read_rsync_long(&mut self) -> Result<i64> {
         let v = self.read_i32_le().await?;
         Ok(if v == -1 {
