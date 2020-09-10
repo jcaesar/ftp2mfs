@@ -11,7 +11,8 @@ But don't look at it sharply…
  * Rsync protocol 27.0 only (Fortunately, newer rsyncds do fallbacks.)
  * Dates are parsed as i32. (I hope this library and maybe even rsync are dead by 2038…)
  * The MOTD and error messages are `log`ed, but can't otherwise be intercepted.
- * Error handling is probably flawed.
+ * Protocol error handling is probably flawed.
+ * Use of `anyhow`.
  * If the rsync server decides not to send a file, you won't find out about it until you call `close` on the `RsyncClient`.
  * No tests
 

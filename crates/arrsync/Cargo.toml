@@ -3,6 +3,12 @@ name = "arrsync"
 version = "0.0.0"
 authors = ["Julius Michaelis <gitter@liftm.de>"]
 edition = "2018"
+license = "MIT"
+readme = "README.md"
+keywords = ["rsync"]
+categories = [ "filesystem", "network-programming" ]
+repository = "https://github.com/jcaesar/ftp2mfs"
+description = "Asynchronous Retrieving Rust rSYNc Client"
 
 [dependencies]
 tokio = { version = "0.2", features = ["tcp", "io-util"] }
