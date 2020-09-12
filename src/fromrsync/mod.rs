@@ -38,19 +38,29 @@ impl crate::suite::Suite for Suite {
             .into_iter()
             .filter(|path| ignore.matched(path, true).is_ignore())
             .collect::<HashSet<_>>();
-        for file in files.iter().filter(|f| f.is_file()) {
+        for file in files.iter() {
             let path = vu8path(&file.path)?;
-            if ignore.matched(path, false).is_ignore() {
+            if ignore.matched(path, file.is_directory()).is_ignore() {
+                log::debug!("{:?} ignored", path);
                 continue;
             }
             if path.ancestors().any(|anc| ignored_folders.contains(anc)) {
+                log::debug!("{:?} in ignored folder", path);
                 continue;
             }
-            ret.files.insert(path.to_owned(), FileInfo {
-                t: file.mtime,
-                s: Some(file.size as usize),
-                deleted: None
-            });
+            if file.is_file() {
+                ret.files.insert(path.to_owned(), FileInfo {
+                    t: file.mtime,
+                    s: Some(file.size as usize),
+                    deleted: None
+                });
+            }
+            if file.is_symlink() {
+                ret.symlinks.insert(
+                    path.to_owned(),
+                    vu8path(file.symlink.as_ref().expect("symlink, no target"))?.to_owned()
+                );
+            }
             path_lookup.insert(path.to_owned(), file.clone());
         }
         Ok(ret)
