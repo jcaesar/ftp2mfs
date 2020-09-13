@@ -28,7 +28,7 @@ All source types have their advantages and drawbacks. Building nice mirrors is d
 * (0) It might be nice to parse modification dates and file sizes from HTML directory listings
 ### FTP
 * (+) Proper standardized protocol for listing directories and transferring files
-* (-) FTPs not supported (afaik)
+* (-) FTPs not supported (it is supported by the underlying library and would be easy to implement)
 * (-) Many FTP servers don't support the MLSD command. To find out whether a file is up to date, FTP2MFS has to send one CWD, one MDTM, and one SIZE command per file sequentially. This is incredibly inefficient.
 * (0) Support may be added for parsing some of the most common human directory listing formats
 ### Rsync

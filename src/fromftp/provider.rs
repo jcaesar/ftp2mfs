@@ -21,8 +21,8 @@ pub struct FtpProvider {
 }
 impl FtpProvider {
     // All of this may be neater with coprocs/generators. Some day
-	pub fn new(mut ftp: FtpStream, base: Url) -> FtpProvider {
-		let (sender, mut receiver) = unbounded::<(PathBuf, Sender<Result<Vec<u8>, std::io::Error>>)>();
+    pub fn new(mut ftp: FtpStream, base: Url) -> FtpProvider {
+        let (sender, mut receiver) = unbounded::<(PathBuf, Sender<Result<Vec<u8>, std::io::Error>>)>();
         log::debug!("Starting FTP file provider");
         tokio::spawn(async move {
             log::debug!("FTP file provider started");
@@ -40,12 +40,12 @@ impl FtpProvider {
                                 Ok(n) => {
                                     log::trace!("Receiving: {} / {}", n, bufsize);
                                     buf.truncate(n);
-                                    if let Err(e) = chan.send(Ok(buf)).await {
-                                        log::warn!("Receiving: write pipe broke: {:?}", e);
-                                        break;
-                                    }
                                     if n == 0 {
                                         log::trace!("Receiving: finished with 0 block");
+                                        break;
+                                    }
+                                    if let Err(e) = chan.send(Ok(buf)).await {
+                                        log::warn!("Receiving: write pipe broke: {:?}", e);
                                         break;
                                     }
                                     bufsize = std::cmp::min(std::cmp::max(1 << 16, n * 9 / 8), 1 << 23);
@@ -62,17 +62,18 @@ impl FtpProvider {
                         Ok(())
                     }
                 }).await;
-				if let Err(e) = retr {
+                if let Err(e) = retr {
                     log::warn!("Retrieving {:?} failed: {:?}", path, e);
-					chan.send(Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, e))).await.ok();
-				} else {
+                    chan.send(Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, e))).await.ok();
+                } else {
                     log::debug!("Retrieving {:?} succeeded", path);
+                    chan.send(Ok(vec![])).await.ok();
                 }
-			}
-			ftp.quit().await.ok();
-		});
-	    FtpProvider { mkreq: sender, base }
-	}
+            }
+            ftp.quit().await.ok();
+        });
+        FtpProvider { mkreq: sender, base }
+    }
 }
 
 #[async_trait::async_trait]
@@ -119,39 +120,45 @@ impl AsyncRead for ChannelReader {
 mod test {
 	use super::*;
 	use super::super::memftp::*;
-	use crate::provider::Provider;
 	use futures::io::AsyncReadExt;
+    use crate::suite::Provider;
+
+    #[allow(dead_code)]
+    fn yeslog() { env_logger::builder().filter_level(log::LevelFilter::Trace).is_test(true).try_init().ok(); }
+    // Problem is that logs from threads won't be properly suppressed for passing threads
+    // so enable it only when debugging a failing test
 
 	fn url() -> Url { Url::parse("ftp://example.example/example").unwrap() }
 
-	#[tokio::test(threaded_scheduler)]
+	#[tokio::test(basic_scheduler)]
 	pub async fn get_a() {
-		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url()).unwrap();
+		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url());
 		let content = &mut String::new();
-		prov.get(Path::new("a")).read_to_string(content).await.unwrap();
+		prov.get(Path::new("a")).await.unwrap().read_to_string(content).await.unwrap();
 		assert_eq!(content, "Test file 1");
 	}
 
-	#[tokio::test(threaded_scheduler)]
+	#[tokio::test(basic_scheduler)]
 	pub async fn get_bc() {
-		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url()).unwrap();
+		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url());
 		let content = &mut String::new();
-		prov.get(Path::new("b/c")).read_to_string(content).await.unwrap();
+		prov.get(Path::new("b/c")).await.unwrap().read_to_string(content).await.unwrap();
 		assert_eq!(content, "Test file in a subdirectory");
 	}
 
-	#[tokio::test(threaded_scheduler)]
+	#[tokio::test(basic_scheduler)]
 	pub async fn get_bc_absdir() {
-		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url()).unwrap();
+		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url());
 		let content = &mut String::new();
-		prov.get(Path::new("/b/c")).read_to_string(content).await.unwrap();
+		prov.get(Path::new("/b/c")).await.unwrap().read_to_string(content).await.unwrap();
 		assert_eq!(content, "Test file in a subdirectory");
 	}
 
-	#[tokio::test(threaded_scheduler)]
+	#[tokio::test(basic_scheduler)]
 	pub async fn cant_get_d() {
-		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url()).unwrap();
+		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url());
 		let dummy = &mut String::new();
-		assert!(prov.get(Path::new("/d")).read_to_string(dummy).await.is_err());
+        let res = prov.get(Path::new("/d")).await.unwrap().read_to_string(dummy).await;
+		assert!(res.is_err());
 	}
 }
