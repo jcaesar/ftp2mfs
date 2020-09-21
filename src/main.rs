@@ -20,6 +20,7 @@ mod nabla;
 #[cfg(test)]
 mod globtest;
 mod suite;
+mod synlink;
 
 use crate::nabla::SyncActs;
 use crate::tomfs::ToMfs;

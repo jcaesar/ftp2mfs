@@ -231,6 +231,21 @@ impl ToMfs {
 			res?
 		}
 
+		for (vtarget, vsource) in crate::synlink::resolve(meta.symlinks.clone(), 0).iter().rev() {
+			// TODO: only do it if anything in target has changed
+			let dtarget = &self.syncdata().join(vtarget);
+			let dsource = &self.syncdata().join(vsource);
+			if self.mfs.stat(dtarget).await?.is_some() {
+				log::debug!("Faking symlink: {:?} -> {:?}", vsource, vtarget);
+				if self.mfs.stat(dsource).await?.is_some() {
+					self.mfs.rm_r(dsource).await?;
+				}
+				self.mfs.cp(dtarget, dsource).await?;
+			} else {
+				log::warn!("Ignoring symlink to nowhere: {:?} -> {:?}", vsource, vtarget);
+			}
+		}
+
 		meta.cid = Some(self.mfs.stat(self.syncdata()).await?.context(format!("File {:?} vanished", self.syncdata()))?.hash);
 		self.write_meta(&meta).await?;
 

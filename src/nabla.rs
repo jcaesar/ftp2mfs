@@ -30,6 +30,12 @@ impl SyncActs {
 				}
 			}
 		};
+		for (s, _) in cur.symlinks.iter() {
+			if !ups.symlinks.contains_key(s) {
+				// TODO? reprieve for symlinks
+				deletes.insert(s);
+			}
+		}
 
 		// Calculate adds and make sure no needed folders are deleted
 		let mut gets: HashSet<&Path> = HashSet::new();
