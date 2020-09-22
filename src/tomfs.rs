@@ -185,7 +185,7 @@ impl ToMfs {
 		log::info!("Recovered {} in {} files.", crate::bytes(recovered_bytes), recovered_files);
 		Ok(curr)
 	}
-	pub async fn apply(&self, sa: SyncActs, p: &dyn Provider, sync_start: &DateTime<Utc>) -> Result<()> {
+	pub async fn apply(&self, sa: SyncActs, p: &dyn Provider, sync_start: &DateTime<Utc>) -> Result<String> {
 		let SyncActs { mut meta, mut get, mut delete } = sa;
 		meta.cid = None;
 		self.write_meta(&meta).await?;
@@ -259,7 +259,8 @@ impl ToMfs {
 			.await.context("Sync finished successfully, but could not be installed as current set")?;
 		self.mfs.flush(self.curr()).await?;
 		self.mfs.flush(self.workdir().parent().expect("If workdir and target have a disjoint suffix, they must have parents")).await?;
-		Ok(())
+
+		Ok(self.mfs.stat(self.curr()).await?.expect("Synced, sync result vanished").hash)
 	}
 	async fn finalize(&self) -> Result<()> {
 		if self.mfs.stat(self.curr()).await?.is_some() {

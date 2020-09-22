@@ -6,6 +6,7 @@ use ignore::gitignore::{ GitignoreBuilder, Gitignore };
 use url::Url;
 use serde::Deserialize;
 use std::time::Duration;
+use std::time::Instant;
 pub fn bytes(b: usize) -> bytesize::ByteSize {
 	use std::convert::TryInto;
 	bytesize::ByteSize::b(b.try_into().expect("outlandish byte count"))
@@ -65,6 +66,8 @@ pub struct Settings {
 
 #[tokio::main(basic_scheduler)]
 async fn main() -> Result<()> {
+	let start = Instant::now();
+
 	env_logger::init();
 
 	let opts: Opts = Opts::parse();
@@ -75,7 +78,7 @@ async fn main() -> Result<()> {
 	let out = ToMfs::new(&opts.api, settings)
 		.await.with_context(|| format!("Failed to access mfs on ipfs at {}", opts.api))?;
 	match run_sync(&opts, &out).await {
-		Ok(_) => (),
+		Ok(cid) => log::info!("Finished sync in {} s, state: {}", (Instant::now() - start).as_secs(), cid),
 		e@Err(_) => {
 			out.failure_clean_lock().await.ok();
 			e?;
@@ -85,7 +88,7 @@ async fn main() -> Result<()> {
 	Ok(())
 }
 
-async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<()> {
+async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<String> {
 	let settings = out.settings();
 	let mut suite = suite::make(&opts, &settings)?;
 
@@ -119,10 +122,10 @@ async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<()> {
 		reprievestats,
 	);
 
-	out.apply(sa, &*suite.provider().await?, &sync_start).await
+	let cid = out.apply(sa, &*suite.provider().await?, &sync_start).await
 		.context("Sync failure")?;
 
-	Ok(())
+	Ok(cid)
 }
 	
 pub(crate) fn ignore<V: AsRef<[T]>, T: AsRef<str>>(base: V) -> Result<Gitignore> {
