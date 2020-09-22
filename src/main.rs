@@ -62,6 +62,9 @@ pub struct Settings {
 	workdir: Option<PathBuf>,
 	/// datadir
 	target: PathBuf,
+	/// Maximum depth up to which self-referential symlink (like x -> .) will be resolved
+	#[serde(default)]
+	max_symlink_cycle: u64
 }
 
 #[tokio::main(basic_scheduler)]

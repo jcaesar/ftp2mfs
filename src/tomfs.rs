@@ -238,7 +238,7 @@ impl ToMfs {
 		}
 
 
-		let symlink_solution = crate::synlink::resolve(meta.symlinks.clone(), 0);
+		let symlink_solution = crate::synlink::resolve(meta.symlinks.clone(), self.settings.max_symlink_cycle);
 		// Contents of the old "symlinks" haven't been updated, delete
 		for (_, vsource) in symlink_solution.iter().rev() {
 			self.mfs.rm_r(self.syncdata().join(vsource)).await.ok();

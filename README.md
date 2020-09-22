@@ -62,4 +62,6 @@ pass: example@example.example # Many FTP servers ask you to provide your e-mail 
 target: /publish-me
 # Path on MFS where files are written to during sync - defaults to /temp/$hash_of_config
 workdir: /temp/foobar
+# Maximum render depth for self-referential symlinks (e.g. a -> .)
+max_symlink_cycle: 0
 ```
