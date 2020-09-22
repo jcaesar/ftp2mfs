@@ -114,7 +114,7 @@ impl ToMfs {
 		let mut curr = self.get_state(self.currmeta()).await?;
 		let sync = self.get_state(self.syncmeta()).await?;
 		let SyncActs { get, delete, .. } = SyncActs::new(curr.clone(), sync.clone(), std::time::Duration::from_secs(0))?;
-		for d in delete.iter() {
+		for (d, _) in delete.iter() {
 			if !self.mfs.stat(self.syncdata().join(d)).await?.is_some() {
 				curr.files.remove(d);
 				// We could also restore it from curr, but we deleted it once because it was gone
@@ -198,14 +198,20 @@ impl ToMfs {
 		let max_running: usize = 5;
 
 		while !delete.is_empty() || !get.is_empty() {
-			if let Some(d) = delete.pop() {
+			if let Some((d, soft)) = delete.pop() {
 				let mut sender = sender.clone();
 				running += 1;
 				let d_abs = self.syncdata().join(&d);
 				let mfs = self.mfs.clone();
 				tokio::spawn(async move {
-					let res = mfs.rm_r(d_abs).await
-						.context(format!("Deletion: {:?}", d));
+					let stat = if soft { mfs.stat(&d_abs).await } else { Ok(None) };
+					let stat = match stat {
+						Err(e) => return sender.send(Err(e).context("Stat before delete")).await.expect("Parallelism synchronization"),
+						Ok(stat) => stat,
+					};
+					let res = if !soft || stat.is_some() {
+						mfs.rm_r(d_abs).await.context(format!("Deletion: {:?}", d))
+					} else { Ok(()) };
 					sender.send(res).await.expect("Parallelism synchronization");
 				});
 			}

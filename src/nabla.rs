@@ -8,7 +8,7 @@ use anyhow::{ Result, Context };
 #[derive(Debug)]
 pub struct SyncActs {
 	pub meta: SyncInfo,
-	pub delete: Vec<PathBuf>,
+	pub delete: Vec<(PathBuf, bool)>,
 	pub get: Vec<PathBuf>,
 }
 impl SyncActs {
@@ -16,7 +16,7 @@ impl SyncActs {
 		let reprieve = chrono::Duration::from_std(reprieve)
 			.with_context(|| format!("Outlandish reprieve duration specified: {:?}", reprieve))?;
 		// Calculate deleted files (and folders - don't keep empty folders)
-		let mut deletes: HashSet<&Path> = HashSet::new();
+		let mut deletes: HashMap<&Path, bool> = HashMap::new();
 		for (f, i) in cur.files.iter() {
 			if !ups.files.contains_key(f) {
 				let now = Utc::now();
@@ -25,7 +25,7 @@ impl SyncActs {
 					ups.files.insert(f.clone(), FileInfo { deleted: Some(deleted), ..*i });
 				} else {
 					for a in PathAncestors::new(f) {
-						deletes.insert(a);
+						deletes.insert(a, false /* hard */);
 					}
 				}
 			}
@@ -33,7 +33,7 @@ impl SyncActs {
 		for (s, _) in cur.symlinks.iter() {
 			if !ups.symlinks.contains_key(s) {
 				// TODO? reprieve for symlinks
-				deletes.insert(s);
+				deletes.insert(s, true /* soft */);
 			}
 		}
 
@@ -53,10 +53,9 @@ impl SyncActs {
 		let gets = gets;
 
 		// Finally, calculate optized set of paths to rm -r
-		let deletes: Vec<PathBuf> =
-			deletes.iter().map(|x| *x)
-			.filter(|d| !PathAncestors::new(d).skip(1).any(|d| deletes.contains(d)))
-			.map(Path::to_path_buf)
+		let deletes: Vec<(PathBuf, bool)> =
+			deletes.iter().map(|(x, s)| (x.to_path_buf(), *s))
+			.filter(|(d, _)| !PathAncestors::new(d).skip(1).any(|d| deletes.contains_key(d)))
 			.collect();
 
 		// Ret
@@ -201,7 +200,7 @@ mod test {
         let new = SyncInfo::new();
         let old = threenew();
         let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0)).unwrap();
-        assert_eq!(toset(&sa.delete), vec!["/"].into_iter().map(Into::into).collect::<HashSet<PathBuf>>(), "All deleted -> root deleted: {:?}", sa);
+        assert_eq!(toset(&sa.delete.iter().map(|(p, _)| p.to_owned()).collect::<Vec<_>>()), vec!["/"].into_iter().map(Into::into).collect::<HashSet<PathBuf>>(), "All deleted -> root deleted: {:?}", sa);
         assert!(sa.get.is_empty(), "No get {:?}", sa);
     }
 
@@ -223,7 +222,7 @@ mod test {
         }
         let sa = SyncActs::new(old, new, std::time::Duration::from_secs(1)).unwrap();
         assert!(sa.get.is_empty(), "No get {:?}", sa);
-        assert_eq!(toset(&sa.delete), stoset(&vec!["/"]), "All deleted -> root deleted: {:?}", sa);
+        assert_eq!(toset(&sa.delete.iter().map(|(p, _)| p.to_owned()).collect::<Vec<_>>()), stoset(&vec!["/"]), "All deleted -> root deleted: {:?}", sa);
     }
 
     #[test]
