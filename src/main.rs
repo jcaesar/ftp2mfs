@@ -27,6 +27,7 @@ use crate::nabla::SyncActs;
 use crate::tomfs::ToMfs;
 	
 #[derive(Clap, Debug)]
+#[clap(about, version)]
 pub struct Opts {
 	/// FTP username override
 	#[clap(short, long)]

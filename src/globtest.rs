@@ -60,3 +60,11 @@ fn ignore_unrecursively() {
     assert!(!gs.matched("b/c", true).is_ignore());
     assert!(!gs.matched("b/c", true).is_ignore());
 }
+
+#[test]
+fn over() {
+    let gs = ignore(vec!["a*", "!ab*", "abc*"]).unwrap();
+    assert!(gs.matched("aaad", false).is_ignore());
+    assert!(!gs.matched("abad", false).is_ignore());
+    assert!(gs.matched("abcd", false).is_ignore());
+}

@@ -1,6 +1,6 @@
 [package]
 name = "ipfs-mfs"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Julius Michaelis <gitter@liftm.de>"]
 edition = "2018"
 license = "MIT"
