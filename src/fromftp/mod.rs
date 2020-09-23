@@ -1,14 +1,14 @@
-mod provider;
-mod recursor;
 #[cfg(test)]
 mod memftp;
+mod provider;
+mod recursor;
 
-use anyhow::{ Result, Context };
-use crate::suite::*;
-use async_ftp::FtpStream;
-use async_ftp::types::FileType;
-use ignore::gitignore::Gitignore;
 use crate::nabla::SyncInfo;
+use crate::suite::*;
+use anyhow::{Context, Result};
+use async_ftp::types::FileType;
+use async_ftp::FtpStream;
+use ignore::gitignore::Gitignore;
 
 pub struct Suite {
 	pub source: url::Url,
@@ -16,18 +16,24 @@ pub struct Suite {
 
 impl Suite {
 	async fn ftp_connect(&self) -> Result<FtpStream> {
-		let host = self.source.host_str()
+		let host = self
+			.source
+			.host_str()
 			.context(format!("No host specified in source url {}", self.source))?;
 		let port = self.source.port().unwrap_or(21);
 		let mut ftp_stream = FtpStream::connect(format!("{}:{}", host, port)).await?;
 		let user = self.source.username();
 		let user = if user == "" { "anonymous" } else { user };
-		let pass = self.source.password()
+		let pass = self
+			.source
+			.password()
 			.context("Password must be set for FTP - many public servers you to provide your e-mail address")?;
 		ftp_stream.login(user, pass).await?;
 		ftp_stream.transfer_type(FileType::Binary).await?;
-		ftp_stream.cwd(self.source.path())
-			.await.with_context(|| format!("Cannot switch to directory {}", self.source.path()))?;
+		ftp_stream
+			.cwd(self.source.path())
+			.await
+			.with_context(|| format!("Cannot switch to directory {}", self.source.path()))?;
 		Ok(ftp_stream)
 	}
 }

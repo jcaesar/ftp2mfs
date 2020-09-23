@@ -1,13 +1,13 @@
 use libunftp::storage::Error as FtpError;
 use libunftp::storage::Result as FtpResult;
 use libunftp::storage::StorageBackend;
-use libunftp::storage::{ Metadata, Fileinfo, ErrorKind };
+use libunftp::storage::{ErrorKind, Fileinfo, Metadata};
 use std::collections::HashMap;
 use std::io::Cursor;
-use std::net::{ SocketAddr, TcpListener };
-use std::path::{ Path, PathBuf };
+use std::net::{SocketAddr, TcpListener};
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use std::time::{ Duration, Instant };
+use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 
 pub async fn serve(files: Box<dyn Fn() -> MemStorage + Send + Sync>) -> SocketAddr {
@@ -23,8 +23,8 @@ pub async fn serve(files: Box<dyn Fn() -> MemStorage + Send + Sync>) -> SocketAd
 		.passive_ports(50000..65535);
 	tokio::spawn(server.listen(format!("{}:{}", addr.ip(), addr.port())));
 
-    connectable(addr).await;
-    return addr;
+	connectable(addr).await;
+	return addr;
 }
 
 pub async fn connectable(addr: SocketAddr) {
@@ -48,49 +48,69 @@ pub struct MemFile {
 #[derive(Clone)]
 pub enum MemFileType {
 	Dir,
-	File(Vec<u8>)
+	File(Vec<u8>),
 }
 impl std::fmt::Debug for MemFileType {
-	fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>)
-		-> Result<(), std::fmt::Error>
-	{
+	fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
 		match self {
 			MemFileType::Dir => fmt.debug_struct("MemFileType::Dir").finish(),
-			MemFileType::File(content) => fmt.debug_struct("MemFileType::File")
-				.field("content", &format!("[ Content of len {}: {:?}, ...]", content.len(), &content[..10] ))
+			MemFileType::File(content) => fmt
+				.debug_struct("MemFileType::File")
+				.field(
+					"content",
+					&format!("[ Content of len {}: {:?}, ...]", content.len(), &content[..10]),
+				)
 				.finish(),
 		}
 	}
 }
 impl MemFile {
-	pub fn from_str(c: &str) -> MemFile { MemFile {
-		content: MemFileType::File(c.as_bytes().to_owned()),
-		modified: SystemTime::now(),
-	}}
+	pub fn from_str(c: &str) -> MemFile {
+		MemFile {
+			content: MemFileType::File(c.as_bytes().to_owned()),
+			modified: SystemTime::now(),
+		}
+	}
 }
 
-#[derive(Clone,Debug)]
+#[derive(Clone, Debug)]
 pub struct MemStorage {
 	files: HashMap<PathBuf, MemFile>,
 }
 impl MemStorage {
-	pub fn new<S,D>(files: D) -> MemStorage 
-		where D: AsRef<[(S, MemFile)]>, S: AsRef<str>
-	{ MemStorage {
-		files: files.as_ref().iter().flat_map(|(p, f)| Path::new(p.as_ref())
-			.ancestors()
-			.skip(1)
-			.map(|pa| 
-				 (pa.to_path_buf(), MemFile { 
-					 modified: f.modified, 
-					 content: MemFileType::Dir 
-				 })
-			)
-			.chain(std::iter::once((Path::new(p.as_ref()).to_path_buf(), f.clone())))
-			.collect::<Vec<(PathBuf, MemFile)>>() // Meh
-		).collect(),
-	}}
-	fn deny<O>() -> FtpResult<O> { Err(FtpError::from(ErrorKind::PermissionDenied)) }
+	pub fn new<S, D>(files: D) -> MemStorage
+	where
+		D: AsRef<[(S, MemFile)]>,
+		S: AsRef<str>,
+	{
+		MemStorage {
+			files: files
+				.as_ref()
+				.iter()
+				.flat_map(
+					|(p, f)| {
+						Path::new(p.as_ref())
+							.ancestors()
+							.skip(1)
+							.map(|pa| {
+								(
+									pa.to_path_buf(),
+									MemFile {
+										modified: f.modified,
+										content: MemFileType::Dir,
+									},
+								)
+							})
+							.chain(std::iter::once((Path::new(p.as_ref()).to_path_buf(), f.clone())))
+							.collect::<Vec<(PathBuf, MemFile)>>()
+					}, // Meh
+				)
+				.collect(),
+		}
+	}
+	fn deny<O>() -> FtpResult<O> {
+		Err(FtpError::from(ErrorKind::PermissionDenied))
+	}
 	fn find<P: AsRef<Path>>(&self, p: P) -> FtpResult<&MemFile> {
 		match self.files.get(p.as_ref()) {
 			Some(entry) => Ok(entry),
@@ -101,14 +121,16 @@ impl MemStorage {
 
 #[derive(Debug)]
 pub struct MemMetadata {
-	 modified: SystemTime,
-	 typ: MemMetadataType,
+	modified: SystemTime,
+	typ: MemMetadataType,
 }
 impl From<&MemFile> for MemMetadata {
-	fn from(f: &MemFile) -> Self { MemMetadata {
-		modified: f.modified,
-		typ: MemMetadataType::from(&f.content),
-	}}
+	fn from(f: &MemFile) -> Self {
+		MemMetadata {
+			modified: f.modified,
+			typ: MemMetadataType::from(&f.content),
+		}
+	}
 }
 #[derive(Debug)]
 pub enum MemMetadataType {
@@ -116,19 +138,43 @@ pub enum MemMetadataType {
 	Dir,
 }
 impl From<&MemFileType> for MemMetadataType {
-	fn from(t: &MemFileType) -> Self { match t { 
-		MemFileType::Dir => MemMetadataType::Dir, 
-		MemFileType::File(content) => MemMetadataType::File { size: content.len() as u64 },
-	}}
+	fn from(t: &MemFileType) -> Self {
+		match t {
+			MemFileType::Dir => MemMetadataType::Dir,
+			MemFileType::File(content) => MemMetadataType::File {
+				size: content.len() as u64,
+			},
+		}
+	}
 }
 impl Metadata for MemMetadata {
-	fn len(&self) -> u64 { match &self.typ { MemMetadataType::File { size, .. } => *size, MemMetadataType::Dir => 42 /* Traditionally, folders are 4096 bytes large. Wonder what this will break */ } }
-	fn is_dir(&self) -> bool { !self.is_file() }
-	fn is_file(&self) -> bool { match &self.typ { MemMetadataType::File { .. } => true, MemMetadataType::Dir => false } }
-	fn is_symlink(&self) -> bool { false } // Nah
-	fn modified(&self) -> Result<std::time::SystemTime, FtpError> { Ok(self.modified) }
-	fn gid(&self) -> u32 { 1042 }
-	fn uid(&self) -> u32 { 1042 }
+	fn len(&self) -> u64 {
+		match &self.typ {
+			MemMetadataType::File { size, .. } => *size,
+			MemMetadataType::Dir => 42, /* Traditionally, folders are 4096 bytes large. Wonder what this will break */
+		}
+	}
+	fn is_dir(&self) -> bool {
+		!self.is_file()
+	}
+	fn is_file(&self) -> bool {
+		match &self.typ {
+			MemMetadataType::File { .. } => true,
+			MemMetadataType::Dir => false,
+		}
+	}
+	fn is_symlink(&self) -> bool {
+		false
+	} // Nah
+	fn modified(&self) -> Result<std::time::SystemTime, FtpError> {
+		Ok(self.modified)
+	}
+	fn gid(&self) -> u32 {
+		1042
+	}
+	fn uid(&self) -> u32 {
+		1042
+	}
 }
 
 #[async_trait::async_trait]
@@ -150,20 +196,29 @@ impl<U: Send + Sync + std::fmt::Debug> StorageBackend<U> for MemStorage {
 			MemFileType::Dir => (),
 			MemFileType::File(_) => return Err(FtpError::from(ErrorKind::PermanentFileNotAvailable)),
 		};
-		Ok(self.files.iter()
-		   .filter(|(p, _)| p.parent() == Some(path))
-		   .map(|(p, i)| Fileinfo { path: p.to_path_buf(), metadata: i.into() })
-		   .collect()
-		)
+		Ok(self
+			.files
+			.iter()
+			.filter(|(p, _)| p.parent() == Some(path))
+			.map(|(p, i)| Fileinfo {
+				path: p.to_path_buf(),
+				metadata: i.into(),
+			})
+			.collect())
 	}
 
-	async fn get<P: AsRef<Path> + Send>(&self, _user: &Option<U>, path: P, start_pos: u64) -> FtpResult<Self::File> {
+	async fn get<P: AsRef<Path> + Send>(
+		&self,
+		_user: &Option<U>,
+		path: P,
+		start_pos: u64,
+	) -> FtpResult<Self::File> {
 		match &self.find(path)?.content {
 			MemFileType::Dir => Err(FtpError::from(ErrorKind::PermanentFileNotAvailable)),
 			MemFileType::File(content) => Ok(Cursor::new(content[start_pos as usize..].to_vec())),
 		}
 	}
-	
+
 	async fn cwd<P: AsRef<Path> + Send>(&self, _user: &Option<U>, path: P) -> FtpResult<()> {
 		match &self.find(path)?.content {
 			MemFileType::Dir => Ok(()),
@@ -171,9 +226,25 @@ impl<U: Send + Sync + std::fmt::Debug> StorageBackend<U> for MemStorage {
 		}
 	}
 
-	async fn put<P: AsRef<Path> + Send, R: tokio::io::AsyncRead + Send + Sync + 'static + Unpin>(&self,	_user: &Option<U>, _bytes: R, _path: P, _start_pos: u64) -> FtpResult<u64> { Self::deny() }
-	async fn del<P: AsRef<Path> + Send>(&self, _user: &Option<U>, _path: P) -> FtpResult<()> { Self::deny() }
-	async fn rmd<P: AsRef<Path> + Send>(&self, _user: &Option<U>, _path: P) -> FtpResult<()> { Self::deny() }
-	async fn mkd<P: AsRef<Path> + Send>(&self, _user: &Option<U>, _path: P) -> FtpResult<()> { Self::deny() }
-	async fn rename<P: AsRef<Path> + Send>(&self, _user: &Option<U>, _from: P, _to: P) -> FtpResult<()> { Self::deny() }
+	async fn put<P: AsRef<Path> + Send, R: tokio::io::AsyncRead + Send + Sync + 'static + Unpin>(
+		&self,
+		_user: &Option<U>,
+		_bytes: R,
+		_path: P,
+		_start_pos: u64,
+	) -> FtpResult<u64> {
+		Self::deny()
+	}
+	async fn del<P: AsRef<Path> + Send>(&self, _user: &Option<U>, _path: P) -> FtpResult<()> {
+		Self::deny()
+	}
+	async fn rmd<P: AsRef<Path> + Send>(&self, _user: &Option<U>, _path: P) -> FtpResult<()> {
+		Self::deny()
+	}
+	async fn mkd<P: AsRef<Path> + Send>(&self, _user: &Option<U>, _path: P) -> FtpResult<()> {
+		Self::deny()
+	}
+	async fn rename<P: AsRef<Path> + Send>(&self, _user: &Option<U>, _from: P, _to: P) -> FtpResult<()> {
+		Self::deny()
+	}
 }

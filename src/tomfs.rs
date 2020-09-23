@@ -1,13 +1,13 @@
 use crate::nabla::SyncActs;
-use chrono::prelude::*;
-use std::path::{ PathBuf, Path };
-use crate::suite::Provider;
 use crate::nabla::SyncInfo;
-use futures::io::Cursor;
-use anyhow::{ Result, Context, bail, ensure };
-use std::time::SystemTime;
-use std::collections::HashSet;
+use crate::suite::Provider;
 use crate::Settings;
+use anyhow::{bail, ensure, Context, Result};
+use chrono::prelude::*;
+use futures::io::Cursor;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 pub struct ToMfs {
 	mfs: mfs::Mfs,
@@ -22,22 +22,53 @@ impl ToMfs {
 		let mfs = mfs::Mfs::new(api)?;
 		let id = nanoid::nanoid!();
 		let (settings, settings_orig) = settings;
-		Ok(ToMfs { mfs, id, settings, settings_orig })
+		Ok(ToMfs {
+			mfs,
+			id,
+			settings,
+			settings_orig,
+		})
 	}
 
-	fn workdir(&self)  -> &Path   { &self.settings.workdir.as_ref().unwrap() }
-	fn curr(&self)     -> &Path   { &self.settings.target }
-	fn sync(&self)     -> PathBuf { self.workdir().join("sync") }
-	fn prev(&self)     -> PathBuf { self.workdir().join("prev") }
-	fn currdata(&self) -> PathBuf { self.curr().join("data") }
-	fn syncdata(&self) -> PathBuf { self.sync().join("data") }
-	fn currmeta(&self) -> PathBuf { self.curr().join("state") }
-	fn syncmeta(&self) -> PathBuf { self.sync().join("state") }
-	fn lastsync(&self) -> PathBuf { self.sync().join("lastsync") }
-	fn currpid(&self)  -> PathBuf { self.curr().join("pid") }
-	fn piddir(&self)   -> PathBuf { self.sync().join("pid") }
-	fn lockf(&self)    -> PathBuf { self.piddir().join(&self.id) }
-	pub(crate) fn settings(&self) -> &Settings { &self.settings }
+	fn workdir(&self) -> &Path {
+		&self.settings.workdir.as_ref().unwrap()
+	}
+	fn curr(&self) -> &Path {
+		&self.settings.target
+	}
+	fn sync(&self) -> PathBuf {
+		self.workdir().join("sync")
+	}
+	fn prev(&self) -> PathBuf {
+		self.workdir().join("prev")
+	}
+	fn currdata(&self) -> PathBuf {
+		self.curr().join("data")
+	}
+	fn syncdata(&self) -> PathBuf {
+		self.sync().join("data")
+	}
+	fn currmeta(&self) -> PathBuf {
+		self.curr().join("state")
+	}
+	fn syncmeta(&self) -> PathBuf {
+		self.sync().join("state")
+	}
+	fn lastsync(&self) -> PathBuf {
+		self.sync().join("lastsync")
+	}
+	fn currpid(&self) -> PathBuf {
+		self.curr().join("pid")
+	}
+	fn piddir(&self) -> PathBuf {
+		self.sync().join("pid")
+	}
+	fn lockf(&self) -> PathBuf {
+		self.piddir().join(&self.id)
+	}
+	pub(crate) fn settings(&self) -> &Settings {
+		&self.settings
+	}
 
 	pub async fn prepare(&self) -> Result<SyncInfo> {
 		self.mfs.rm_r(self.prev()).await.ok();
@@ -49,15 +80,16 @@ impl ToMfs {
 			}
 		}
 		self.lock()
-			.await.with_context(|| format!("Failed to create lock in {:?}", self.sync()))?;
-		self.mfs.put(self.sync().join("mirror"), Cursor::new(self.settings_orig.clone()))
-			.await.context("Saving mirror settings in mfs")?;
+			.await
+			.with_context(|| format!("Failed to create lock in {:?}", self.sync()))?;
+		self.mfs
+			.put(self.sync().join("mirror"), Cursor::new(self.settings_orig.clone()))
+			.await
+			.context("Saving mirror settings in mfs")?;
 		if recovery_required {
-			self.recover()
-				.await.context("failed to recover from failed sync")
+			self.recover().await.context("failed to recover from failed sync")
 		} else {
-			self.get_state(self.currmeta())
-				.await
+			self.get_state(self.currmeta()).await
 		}
 	}
 	async fn check_existing(&self) -> Result<bool> {
@@ -81,16 +113,23 @@ impl ToMfs {
 		}
 	}
 	async fn lock(&self) -> Result<()> {
-		let pid = format!("PID:{}@{}, {}\n",
+		let pid = format!(
+			"PID:{}@{}, {}\n",
 			std::process::id(),
-			hostname::get().map(|h| h.to_string_lossy().into_owned()).unwrap_or("unkown_host".to_owned()),
-			SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("Bogous clock?").as_secs(),
+			hostname::get()
+				.map(|h| h.to_string_lossy().into_owned())
+				.unwrap_or("unkown_host".to_owned()),
+			SystemTime::now()
+				.duration_since(SystemTime::UNIX_EPOCH)
+				.expect("Bogous clock?")
+				.as_secs(),
 		);
 		self.mfs.mkdirs(self.piddir()).await?;
 		self.mfs.put(self.lockf(), Cursor::new(pid)).await?;
 		self.mfs.flush(self.piddir()).await?; // Probably unnecessary, but eh.
 		let locks = self.mfs.ls(self.piddir()).await?;
-		ensure!(locks == vec![Path::new(&self.id)],
+		ensure!(
+			locks == vec![Path::new(&self.id)],
 			"Locking race (Found {}), bailing out",
 			locks.iter().map(|l| l.to_string_lossy()).collect::<Vec<_>>().join(", "),
 			// Mutually exclusive. Both may bail. Oh well.
@@ -102,7 +141,7 @@ impl ToMfs {
 			true => {
 				let bytes: Vec<u8> = self.mfs.get_fully(&p).await?;
 				Ok(serde_json::from_slice(&bytes).context("JSON")?)
-			},
+			}
 			false => Ok(SyncInfo::new()),
 		}
 	}
@@ -113,7 +152,8 @@ impl ToMfs {
 		// (one catch: files of same size have to be assumed old)
 		let mut curr = self.get_state(self.currmeta()).await?;
 		let sync = self.get_state(self.syncmeta()).await?;
-		let SyncActs { get, delete, .. } = SyncActs::new(curr.clone(), sync.clone(), std::time::Duration::from_secs(0))?;
+		let SyncActs { get, delete, .. } =
+			SyncActs::new(curr.clone(), sync.clone(), std::time::Duration::from_secs(0))?;
 		for (d, _) in delete.iter() {
 			if !self.mfs.stat(self.syncdata().join(d)).await?.is_some() {
 				curr.files.remove(d);
@@ -126,22 +166,30 @@ impl ToMfs {
 		let mut recovered_files: usize = 0;
 		for a in get.iter() {
 			let anew = &self.syncdata().join(&a);
-			enum State { ResetSyncToCurrent, AcceptSynced, LeaveNonExisting };
-			use State::*;
+			enum State {
+				ResetSyncToCurrent,
+				AcceptSynced,
+				LeaveNonExisting,
+			};
 			use crate::nabla::FileInfo;
+			use State::*;
 			let existing = curr.files.get(a);
 			let newfile = sync.files.get(a).unwrap();
 			let resolution = match (existing, newfile.s) {
 				(_, None) => ResetSyncToCurrent,
 				(Some(FileInfo { s: None, .. }), _) => ResetSyncToCurrent,
-				(Some(FileInfo { s: Some(currfile_size), .. }), Some(ref newfile_size))
-					if currfile_size == newfile_size => ResetSyncToCurrent, // (the catch)
+				(
+					Some(FileInfo {
+						s: Some(currfile_size), ..
+					}),
+					Some(ref newfile_size),
+				) if currfile_size == newfile_size => ResetSyncToCurrent, // (the catch)
 				(_, Some(newfile_size)) => {
 					let stat = self.mfs.stat(anew).await?;
 					if let Some(stat) = stat {
 						match stat.size == newfile_size as u64 {
 							true => AcceptSynced,
-							false => ResetSyncToCurrent
+							false => ResetSyncToCurrent,
 						}
 					} else {
 						LeaveNonExisting
@@ -153,19 +201,19 @@ impl ToMfs {
 					for a in a.ancestors() {
 						paths_for_deletion.insert(a);
 					}
-				},
+				}
 				(ResetSyncToCurrent, true) => {
 					log::debug!("Recovery: resetting {:?}", anew);
 					self.mfs.rm_r(anew).await.ok();
 					self.mfs.cp(self.currdata().join(&a), anew).await?
-				},
+				}
 				(AcceptSynced, _) => {
 					log::debug!("Recovering {:?} -> {:?}", a, newfile);
 					curr.files.insert(a.to_path_buf(), newfile.clone());
 					recovered_bytes += newfile.s.unwrap_or(0);
 					recovered_files += 1;
-				},
-				(LeaveNonExisting, _) => ()
+				}
+				(LeaveNonExisting, _) => (),
 			};
 		}
 		let curr = curr;
@@ -182,17 +230,27 @@ impl ToMfs {
 				}
 			}
 		}
-		log::info!("Recovered {} in {} files.", crate::bytes(recovered_bytes), recovered_files);
+		log::info!(
+			"Recovered {} in {} files.",
+			crate::bytes(recovered_bytes),
+			recovered_files
+		);
 		Ok(curr)
 	}
 	pub async fn apply(&self, sa: SyncActs, p: &dyn Provider, sync_start: &DateTime<Utc>) -> Result<String> {
-		let SyncActs { mut meta, mut get, mut delete } = sa;
+		let SyncActs {
+			mut meta,
+			mut get,
+			mut delete,
+		} = sa;
 		meta.cid = None;
 		self.write_meta(&meta).await?;
-		self.mfs.put(self.lastsync(), Cursor::new(sync_start.to_rfc3339().into_bytes())).await?;
-		
-		use futures_util::sink::SinkExt;
+		self.mfs
+			.put(self.lastsync(), Cursor::new(sync_start.to_rfc3339().into_bytes()))
+			.await?;
+
 		use futures::stream::StreamExt;
+		use futures_util::sink::SinkExt;
 		let (sender, mut receiver) = futures::channel::mpsc::channel::<anyhow::Result<()>>(1);
 		let mut running: usize = 0;
 		let max_running: usize = 5;
@@ -206,12 +264,19 @@ impl ToMfs {
 				tokio::spawn(async move {
 					let stat = if soft { mfs.stat(&d_abs).await } else { Ok(None) };
 					let stat = match stat {
-						Err(e) => return sender.send(Err(e).context("Stat before delete")).await.expect("Parallelism synchronization"),
+						Err(e) => {
+							return sender
+								.send(Err(e).context("Stat before delete"))
+								.await
+								.expect("Parallelism synchronization")
+						}
 						Ok(stat) => stat,
 					};
 					let res = if !soft || stat.is_some() {
 						mfs.rm_r(d_abs).await.context(format!("Deletion: {:?}", d))
-					} else { Ok(()) };
+					} else {
+						Ok(())
+					};
 					sender.send(res).await.expect("Parallelism synchronization");
 				});
 			}
@@ -223,8 +288,7 @@ impl ToMfs {
 				let stream: Box<dyn futures::AsyncRead + Send + Sync + Unpin> = p.get(&a).await?;
 				let mfs = self.mfs.clone();
 				tokio::spawn(async move {
-					let res = mfs.put(&pth, stream)
-						.await.context(format!("Requisiton: {:?}", &a));
+					let res = mfs.put(&pth, stream).await.context(format!("Requisiton: {:?}", &a));
 					sender.send(res).await.expect("Parallelism synchronization");
 				});
 			}
@@ -236,7 +300,6 @@ impl ToMfs {
 		while let Some(res) = receiver.next().await {
 			res?
 		}
-
 
 		let symlink_solution = crate::synlink::resolve(meta.symlinks.clone(), self.settings.max_symlink_cycle);
 		// Contents of the old "symlinks" haven't been updated, delete
@@ -259,15 +322,33 @@ impl ToMfs {
 			}
 		}
 
-		meta.cid = Some(self.mfs.stat(self.syncdata()).await?.context(format!("File {:?} vanished", self.syncdata()))?.hash);
+		meta.cid = Some(
+			self.mfs
+				.stat(self.syncdata())
+				.await?
+				.context(format!("File {:?} vanished", self.syncdata()))?
+				.hash,
+		);
 		self.write_meta(&meta).await?;
 
 		self.finalize()
-			.await.context("Sync finished successfully, but could not be installed as current set")?;
+			.await
+			.context("Sync finished successfully, but could not be installed as current set")?;
 		self.mfs.flush(self.curr()).await?;
-		self.mfs.flush(self.workdir().parent().expect("If workdir and target have a disjoint suffix, they must have parents")).await?;
+		self.mfs
+			.flush(
+				self.workdir()
+					.parent()
+					.expect("If workdir and target have a disjoint suffix, they must have parents"),
+			)
+			.await?;
 
-		Ok(self.mfs.stat(self.curr()).await?.expect("Synced, sync result vanished").hash)
+		Ok(self
+			.mfs
+			.stat(self.curr())
+			.await?
+			.expect("Synced, sync result vanished")
+			.hash)
 	}
 	async fn finalize(&self) -> Result<()> {
 		if self.mfs.stat(self.curr()).await?.is_some() {
@@ -279,7 +360,6 @@ impl ToMfs {
 		Ok(())
 	}
 	pub async fn failure_clean_lock(&self) -> Result<()> {
-
 		self.mfs.rm_r(self.currpid()).await.ok();
 		self.mfs.rm(self.lockf()).await?;
 		// Can't remove the sync pid dir, as there is no rmdir (that only removes empty dirs)

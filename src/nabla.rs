@@ -1,9 +1,9 @@
+use anyhow::{Context, Result};
 use chrono::prelude::*;
-use serde::{ Deserialize, Serialize };
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::path::{ PathBuf, Path };
-use anyhow::{ Result, Context };
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub struct SyncActs {
@@ -22,14 +22,20 @@ impl SyncActs {
 				let now = Utc::now();
 				let deleted = i.deleted.unwrap_or_else(|| now);
 				if now.signed_duration_since(deleted) < reprieve {
-					ups.files.insert(f.clone(), FileInfo { deleted: Some(deleted), ..*i });
+					ups.files.insert(
+						f.clone(),
+						FileInfo {
+							deleted: Some(deleted),
+							..*i
+						},
+					);
 				} else {
 					for a in PathAncestors::new(f) {
 						deletes.insert(a, false /* hard */);
 					}
 				}
 			}
-		};
+		}
 		for (s, _) in cur.symlinks.iter() {
 			if !ups.symlinks.contains_key(s) {
 				// TODO? reprieve for symlinks
@@ -53,32 +59,45 @@ impl SyncActs {
 		let gets = gets;
 
 		// Finally, calculate optized set of paths to rm -r
-		let deletes: Vec<(PathBuf, bool)> =
-			deletes.iter().map(|(x, s)| (x.to_path_buf(), *s))
+		let deletes: Vec<(PathBuf, bool)> = deletes
+			.iter()
+			.map(|(x, s)| (x.to_path_buf(), *s))
 			.filter(|(d, _)| !PathAncestors::new(d).skip(1).any(|d| deletes.contains_key(d)))
 			.collect();
 
 		// Ret
 		let gets = gets.into_iter().map(Path::to_path_buf).collect();
-		Ok(SyncActs { meta: ups, delete: deletes, get: gets })
+		Ok(SyncActs {
+			meta: ups,
+			delete: deletes,
+			get: gets,
+		})
 	}
 
-	pub fn stats(&self) -> Stats { Stats {
-		final_bytes: self.meta.files.iter()
-			.filter_map(|(_, v)| v.s).sum(),
-		get_bytes: self.get.iter()
-			.filter_map(|p|
-				self.meta.files.get(p)
-					.expect("trying to get a file, but don't know why").s
-			).sum(),
-		reprieve_files: self.meta.files.iter()
-			.filter(|(_, v)| v.deleted.is_some())
-			.count(),
-		reprieve_bytes: self.meta.files.iter()
-			.filter(|(_, v)| v.deleted.is_some())
-			.filter_map(|(_, v)| v.s)
-			.sum(),
-	}}
+	pub fn stats(&self) -> Stats {
+		Stats {
+			final_bytes: self.meta.files.iter().filter_map(|(_, v)| v.s).sum(),
+			get_bytes: self
+				.get
+				.iter()
+				.filter_map(|p| {
+					self.meta
+						.files
+						.get(p)
+						.expect("trying to get a file, but don't know why")
+						.s
+				})
+				.sum(),
+			reprieve_files: self.meta.files.iter().filter(|(_, v)| v.deleted.is_some()).count(),
+			reprieve_bytes: self
+				.meta
+				.files
+				.iter()
+				.filter(|(_, v)| v.deleted.is_some())
+				.filter_map(|(_, v)| v.s)
+				.sum(),
+		}
+	}
 }
 
 pub struct Stats {
@@ -101,7 +120,8 @@ pub struct SyncInfo {
 
 fn ordered_map<S, V>(value: &HashMap<PathBuf, V>, serializer: S) -> Result<S::Ok, S::Error>
 where
-	S: serde::Serializer, V: Serialize,
+	S: serde::Serializer,
+	V: Serialize,
 {
 	let mut value: Vec<(&PathBuf, &V)> = value.iter().collect();
 	value.sort_by(|(k1, _), (k2, _)| k1.cmp(&k2));
@@ -114,12 +134,14 @@ where
 }
 
 impl SyncInfo {
-	pub fn new() -> SyncInfo { SyncInfo {
-		version: 1,
-		files: HashMap::new(),
-		symlinks: HashMap::new(),
-		cid: None,
-	}}
+	pub fn new() -> SyncInfo {
+		SyncInfo {
+			version: 1,
+			files: HashMap::new(),
+			symlinks: HashMap::new(),
+			cid: None,
+		}
+	}
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
@@ -127,16 +149,18 @@ pub struct FileInfo {
 	pub t: Option<DateTime<Utc>>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub deleted: Option<DateTime<Utc>>,
-	pub s: Option<usize>
+	pub s: Option<usize>,
 }
 
 pub struct PathAncestors<'a> {
 	p: Option<&'a Path>,
 }
 impl PathAncestors<'_> {
-	pub fn new(p: &Path) -> PathAncestors { PathAncestors { p: Some(p) } }
+	pub fn new(p: &Path) -> PathAncestors {
+		PathAncestors { p: Some(p) }
+	}
 }
-impl <'a> Iterator for PathAncestors<'a> {
+impl<'a> Iterator for PathAncestors<'a> {
 	type Item = &'a Path;
 	fn next(&mut self) -> Option<&'a Path> {
 		let mut next = self.p?.parent();
@@ -147,105 +171,124 @@ impl <'a> Iterator for PathAncestors<'a> {
 
 #[cfg(test)]
 mod test {
-    use super::*;
+	use super::*;
 
-    fn threenew() -> SyncInfo {
-        let mut new = SyncInfo::new();
-        let dummyfai = || FileInfo { t: None, s: None, deleted: None };
-        new.files.insert(Into::into("/a"), dummyfai());
-        new.files.insert(Into::into("/b"), dummyfai());
-        new.files.insert(Into::into("/c"), dummyfai());
-        return new;
-    }
-    fn abc() -> HashSet<PathBuf> {
-        stoset(&vec!["/a", "/b", "/c"])
-    }
+	fn threenew() -> SyncInfo {
+		let mut new = SyncInfo::new();
+		let dummyfai = || FileInfo {
+			t: None,
+			s: None,
+			deleted: None,
+		};
+		new.files.insert(Into::into("/a"), dummyfai());
+		new.files.insert(Into::into("/b"), dummyfai());
+		new.files.insert(Into::into("/c"), dummyfai());
+		return new;
+	}
+	fn abc() -> HashSet<PathBuf> {
+		stoset(&vec!["/a", "/b", "/c"])
+	}
 
-    fn toset(l: &[PathBuf]) -> HashSet<PathBuf> {
-        l.iter().map(Clone::clone).collect()
-    }
-    fn stoset(l: &[&str]) -> HashSet<PathBuf> {
-        l.iter().map(Into::into).collect()
-    }
+	fn toset(l: &[PathBuf]) -> HashSet<PathBuf> {
+		l.iter().map(Clone::clone).collect()
+	}
+	fn stoset(l: &[&str]) -> HashSet<PathBuf> {
+		l.iter().map(Into::into).collect()
+	}
 
-    #[test]
-    fn all_quiet_in_the_west() {
-        let old = SyncInfo::new();
-        let new = SyncInfo::new();
-        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0)).unwrap();
-        assert!(sa.get.is_empty(), "{:?}", sa);
-        assert!(sa.delete.is_empty(), "{:?}", sa);
-    }
+	#[test]
+	fn all_quiet_in_the_west() {
+		let old = SyncInfo::new();
+		let new = SyncInfo::new();
+		let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0)).unwrap();
+		assert!(sa.get.is_empty(), "{:?}", sa);
+		assert!(sa.delete.is_empty(), "{:?}", sa);
+	}
 
-    #[test]
-    fn no_new_is_good_new() {
-        let old = threenew();
-        let new = threenew();
-        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0)).unwrap();
-        assert!(sa.get.is_empty(), "{:?}", sa);
-        assert!(sa.delete.is_empty(), "{:?}", sa);
-    }
+	#[test]
+	fn no_new_is_good_new() {
+		let old = threenew();
+		let new = threenew();
+		let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0)).unwrap();
+		assert!(sa.get.is_empty(), "{:?}", sa);
+		assert!(sa.delete.is_empty(), "{:?}", sa);
+	}
 
-    #[test]
-    fn allnew_allsync() {
-        let old = SyncInfo::new();
-        let new = threenew();
-        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0)).unwrap();
-        assert_eq!(toset(&sa.get), abc(), "Three new files: {:?}", sa);
-        assert!(sa.delete.is_empty(), "No existing, no deletions: {:?}", sa);
-    }
+	#[test]
+	fn allnew_allsync() {
+		let old = SyncInfo::new();
+		let new = threenew();
+		let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0)).unwrap();
+		assert_eq!(toset(&sa.get), abc(), "Three new files: {:?}", sa);
+		assert!(sa.delete.is_empty(), "No existing, no deletions: {:?}", sa);
+	}
 
-    #[test]
-    fn allgone_alldelete() {
-        let new = SyncInfo::new();
-        let old = threenew();
-        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0)).unwrap();
-        assert_eq!(toset(&sa.delete.iter().map(|(p, _)| p.to_owned()).collect::<Vec<_>>()), vec!["/"].into_iter().map(Into::into).collect::<HashSet<PathBuf>>(), "All deleted -> root deleted: {:?}", sa);
-        assert!(sa.get.is_empty(), "No get {:?}", sa);
-    }
+	#[test]
+	fn allgone_alldelete() {
+		let new = SyncInfo::new();
+		let old = threenew();
+		let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0)).unwrap();
+		assert_eq!(
+			toset(&sa.delete.iter().map(|(p, _)| p.to_owned()).collect::<Vec<_>>()),
+			vec!["/"].into_iter().map(Into::into).collect::<HashSet<PathBuf>>(),
+			"All deleted -> root deleted: {:?}",
+			sa
+		);
+		assert!(sa.get.is_empty(), "No get {:?}", sa);
+	}
 
-    #[test]
-    fn keep() {
-        let new = SyncInfo::new();
-        let old = threenew();
-        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(1)).unwrap();
-        assert!(sa.get.is_empty(), "No get {:?}", sa);
-        assert!(sa.delete.is_empty(), "At first, it doesn't know when a file was deleted. So it should need to keep it, no matter how short the retention is: {:?}", sa);
-    }
-    #[test]
-    fn then_delete() {
-        let new = SyncInfo::new();
-        let mut old = threenew();
-        let now = Utc::now();
-        for (_,i) in old.files.iter_mut() {
-            i.deleted = Some(now - chrono::Duration::weeks(100 * 52));
-        }
-        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(1)).unwrap();
-        assert!(sa.get.is_empty(), "No get {:?}", sa);
-        assert_eq!(toset(&sa.delete.iter().map(|(p, _)| p.to_owned()).collect::<Vec<_>>()), stoset(&vec!["/"]), "All deleted -> root deleted: {:?}", sa);
-    }
+	#[test]
+	fn keep() {
+		let new = SyncInfo::new();
+		let old = threenew();
+		let sa = SyncActs::new(old, new, std::time::Duration::from_secs(1)).unwrap();
+		assert!(sa.get.is_empty(), "No get {:?}", sa);
+		assert!(sa.delete.is_empty(), "At first, it doesn't know when a file was deleted. So it should need to keep it, no matter how short the retention is: {:?}", sa);
+	}
+	#[test]
+	fn then_delete() {
+		let new = SyncInfo::new();
+		let mut old = threenew();
+		let now = Utc::now();
+		for (_, i) in old.files.iter_mut() {
+			i.deleted = Some(now - chrono::Duration::weeks(100 * 52));
+		}
+		let sa = SyncActs::new(old, new, std::time::Duration::from_secs(1)).unwrap();
+		assert!(sa.get.is_empty(), "No get {:?}", sa);
+		assert_eq!(
+			toset(&sa.delete.iter().map(|(p, _)| p.to_owned()).collect::<Vec<_>>()),
+			stoset(&vec!["/"]),
+			"All deleted -> root deleted: {:?}",
+			sa
+		);
+	}
 
-    #[test]
-    fn info_changed() {
-        let mut old = threenew();
-        let mut new = threenew();
-        let now = Utc::now();
-        old.files.get_mut(&PathBuf::new().join("/a")).unwrap().s = Some(1);
-        new.files.get_mut(&PathBuf::new().join("/a")).unwrap().s = Some(2);
-        old.files.get_mut(&PathBuf::new().join("/b")).unwrap().t = Some(now);
-        new.files.get_mut(&PathBuf::new().join("/b")).unwrap().t = Some(now + chrono::Duration::seconds(1));
-        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(42)).unwrap();
-        assert!(sa.delete.is_empty(), "Don't delete on change {:?}", sa);
-        assert_eq!(toset(&sa.get), stoset(&vec!["/a", "/b"]), "Get changed: {:?}", sa);
-    }
+	#[test]
+	fn info_changed() {
+		let mut old = threenew();
+		let mut new = threenew();
+		let now = Utc::now();
+		old.files.get_mut(&PathBuf::new().join("/a")).unwrap().s = Some(1);
+		new.files.get_mut(&PathBuf::new().join("/a")).unwrap().s = Some(2);
+		old.files.get_mut(&PathBuf::new().join("/b")).unwrap().t = Some(now);
+		new.files.get_mut(&PathBuf::new().join("/b")).unwrap().t = Some(now + chrono::Duration::seconds(1));
+		let sa = SyncActs::new(old, new, std::time::Duration::from_secs(42)).unwrap();
+		assert!(sa.delete.is_empty(), "Don't delete on change {:?}", sa);
+		assert_eq!(toset(&sa.get), stoset(&vec!["/a", "/b"]), "Get changed: {:?}", sa);
+	}
 
-    #[test]
-    fn honor_reprieve_on_recovery() {
-        let old = SyncInfo::new();
-        let mut new = threenew();
-        let now = Utc::now();
-        new.files.get_mut(&PathBuf::new().join("/a")).unwrap().deleted = Some(now);
-        let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0)).unwrap();
-        assert_eq!(toset(&sa.get), abc(), "A is marked get though the new has deleted set: {:?}", sa);
-    }
+	#[test]
+	fn honor_reprieve_on_recovery() {
+		let old = SyncInfo::new();
+		let mut new = threenew();
+		let now = Utc::now();
+		new.files.get_mut(&PathBuf::new().join("/a")).unwrap().deleted = Some(now);
+		let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0)).unwrap();
+		assert_eq!(
+			toset(&sa.get),
+			abc(),
+			"A is marked get though the new has deleted set: {:?}",
+			sa
+		);
+	}
 }

@@ -1,6 +1,6 @@
 use async_ftp::FtpStream;
 use std::result::Result;
-use unmemftp::{ MemStorage, MemFile, serve };
+use unmemftp::{serve, MemFile, MemStorage};
 
 fn somefiles() -> MemStorage {
 	MemStorage::new(vec![
@@ -36,7 +36,7 @@ mod serve {
 		ftp.cwd("b").await.unwrap();
 		retr_test(ftp, "c", "BC").await;
 	}
-	
+
 	#[tokio::test(threaded_scheduler)]
 	pub async fn cannot_cd_to_nowhere() {
 		let addr = serve(Box::new(somefiles)).await;
@@ -44,7 +44,7 @@ mod serve {
 		let ftp = &mut default_ftp_client(addr).await;
 		assert!(ftp.cwd("d").await.is_err());
 	}
-	
+
 	#[tokio::test(threaded_scheduler)]
 	pub async fn cannot_get_nowhere() {
 		let addr = serve(Box::new(somefiles)).await;
@@ -54,30 +54,34 @@ mod serve {
 	}
 
 	async fn retr_test(ftp: &mut FtpStream, path: &str, expected: &str) {
-        use async_ftp::{DataStream, FtpError};
-        use tokio::io::{AsyncReadExt, BufReader};
+		use async_ftp::{DataStream, FtpError};
+		use tokio::io::{AsyncReadExt, BufReader};
 		async fn receive(mut reader: BufReader<DataStream>) -> Result<String, FtpError> {
-            let mut buffer = Vec::new();
-            reader
-                .read_to_end(&mut buffer)
-                .await
-                .map_err(FtpError::ConnectionError)?;
-		    return Ok(std::str::from_utf8(&buffer).unwrap().to_owned());
-        }
-        assert_eq!(ftp.retr(path, receive).await.unwrap(), expected);
+			let mut buffer = Vec::new();
+			reader
+				.read_to_end(&mut buffer)
+				.await
+				.map_err(FtpError::ConnectionError)?;
+			return Ok(std::str::from_utf8(&buffer).unwrap().to_owned());
+		}
+		assert_eq!(ftp.retr(path, receive).await.unwrap(), expected);
 	}
 }
 
 mod acro {
 	use super::*;
-	use std::sync::Arc;
-	use libunftp::auth::{ Authenticator, DefaultUser };
+	use libunftp::auth::{Authenticator, DefaultUser};
 	use std::error::Error;
+	use std::sync::Arc;
 
 	struct BobAuthenticator {}
 	#[async_trait::async_trait]
 	impl Authenticator<DefaultUser> for BobAuthenticator {
-		async fn authenticate(&self, username: &str, password: &str) -> Result<DefaultUser, Box<dyn Error + Send + Sync>> {
+		async fn authenticate(
+			&self,
+			username: &str,
+			password: &str,
+		) -> Result<DefaultUser, Box<dyn Error + Send + Sync>> {
 			if username == "bob" && password == "bob" {
 				Ok(DefaultUser {})
 			} else {
@@ -100,7 +104,7 @@ mod acro {
 
 		default_ftp_client(addr.parse().unwrap()).await;
 	}
-	
+
 	#[tokio::test(threaded_scheduler)]
 	pub async fn you_are_bob() {
 		let addr = "127.0.0.1:46859";
@@ -111,13 +115,13 @@ mod acro {
 		tokio::spawn(server.listen(addr));
 		unmemftp::connectable(addr.parse().unwrap()).await;
 
-		let mut ftp = FtpStream::connect(addr).await .unwrap();
+		let mut ftp = FtpStream::connect(addr).await.unwrap();
 		ftp.login("bob", "bob").await.unwrap();
 		ftp.transfer_type(async_ftp::types::FileType::Binary).await.unwrap();
 		assert!(ftp.simple_retr("a").await.is_ok());
 	}
 }
-	
+
 async fn default_ftp_client(addr: std::net::SocketAddr) -> FtpStream {
 	let mut ftp = FtpStream::connect(addr).await.unwrap();
 	ftp.login("anonymous", "onymous").await.unwrap();
