@@ -311,6 +311,7 @@ mod tests {
 	use super::*;
 
 	#[tokio::test]
+	#[ignore]
 	async fn eierlegendewollmilchsau() {
 		let mfs = Mfs::new("http://127.0.0.1:5001").expect("create client");
 		let basedir = Path::new("/test-rust-ipfs-mfs");

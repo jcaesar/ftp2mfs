@@ -1,0 +1,54 @@
+version: 2
+
+jobs:
+  build-45: # Apparently the latest version applicable to my code. quite recent. :/
+    docker:
+        - image: circleci/rust:1.45
+    steps: &build-steps
+      - checkout
+      - run:
+          name: Version information
+          command: rustc --version; cargo --version; rustup --version
+      - run:
+          name: Calculate dependencies
+          command: cargo generate-lockfile
+      - restore_cache:
+          keys:
+            - v4-cargo-cache-{{ arch }}-{{ .Environment.CIRCLE_JOB }}-{{ checksum "Cargo.lock" }}
+            - v4-cargo-cache-{{ arch }}-{{ .Environment.CIRCLE_JOB }}-
+            - v4-cargo-cache-
+      - run:
+          name: Build all targets
+          command: cargo build --all
+      - save_cache:
+          paths:
+            - /usr/local/cargo/registry
+            - target/debug/.fingerprint
+            - target/debug/build
+            - target/debug/deps
+          key: v4-cargo-cache-{{ arch }}-{{ .Environment.CIRCLE_JOB }}-{{ checksum "Cargo.lock" }}
+      - run:
+          name: Run all tests
+          command: RUST_BACKTRACE=full cargo test --all
+  build:
+    docker:
+        - image: circleci/rust:1
+    steps: *build-steps
+  fmt:
+    docker:
+        - image: circleci/rust:1.38
+    steps:
+      - checkout
+      - run:
+          name: Version information
+          command: rustc --version; cargo --version; rustup --version
+      - run:
+          name: Check format
+          command: cargo fmt -- --check
+workflows:
+  version: 2
+  build_and_test:
+    jobs:
+      - build
+      - build-45
+      - fmt

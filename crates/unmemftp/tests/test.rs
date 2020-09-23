@@ -74,6 +74,7 @@ mod acro {
 	use std::error::Error;
 	use std::sync::Arc;
 
+	#[derive(Debug)]
 	struct BobAuthenticator {}
 	#[async_trait::async_trait]
 	impl Authenticator<DefaultUser> for BobAuthenticator {
