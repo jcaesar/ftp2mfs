@@ -93,7 +93,12 @@ impl RsyncClient {
 		let (read, mut write) = Self::stream(&url).await?;
 		let mut read = BufReader::new(read);
 		Self::send_handshake(&mut write, path, base).await?;
-		Self::read_handshake(&mut read, &url.origin().unicode_serialization()).await?;
+		let origin = format!(
+			"{}{}",
+			url.host().expect("Connected to an url without host"),
+			url.port().map(|p| format!("{}", p)).unwrap_or("".to_string())
+		);
+		Self::read_handshake(&mut read, &origin).await?;
 		let mut read = EnvelopeRead::new(read); // Server multiplex start
 		let id = NEXT_CLIENT_ID.fetch_add(1, AtomicOrder::SeqCst);
 		let files = Self::read_file_list(&mut read, id).await?;
