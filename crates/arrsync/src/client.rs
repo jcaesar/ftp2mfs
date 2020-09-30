@@ -11,7 +11,7 @@ pub struct RsyncClient {
 struct RsyncClientInner {
 	reqs: Requests,
 	write: AsyncMutex<OwnedWriteHalf>,
-	finish: SyncMutex<Option<tokio::task::JoinHandle<Result<Enveloped>>>>,
+	finish: SyncMutex<Option<JoinHandle<Result<Enveloped>>>>,
 	id: usize,
 }
 
@@ -50,15 +50,8 @@ impl RsyncClient {
 			read.read_i32_le().await? == -1,
 			"Phase switch receive-list -> receive-file"
 		);
-		let reqs: Requests = Arc::new(SyncMutex::new(Some(default())));
-		let process = tokio::spawn(
-			ReadFilesProcess {
-				read,
-				reqs: reqs.clone(),
-				current: None,
-			}
-			.run(),
-		);
+		let reqs: Requests = RequestsInner::new_requests();
+		let process = ReadFilesProcess::spawn(read, reqs.clone());
 		let inner = RsyncClientInner {
 			reqs: reqs.clone(),
 			write: AsyncMutex::new(write),
@@ -85,10 +78,12 @@ impl RsyncClient {
 		);
 		anyhow::ensure!(file.is_file(), "Can only request files, {} is not", file);
 		let (data_send, data_recv) = mpsc::channel(10);
+		RequestsInner::refresh_timeout(&mut self.inner.reqs.clone());
 		self.inner
 			.reqs
 			.lock()
 			.unwrap()
+			.requests
 			.as_mut()
 			.context("Client fully exited")?
 			.entry(file.idx)
