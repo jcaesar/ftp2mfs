@@ -313,6 +313,9 @@ impl ToMfs {
 			let dsource = &self.syncdata().join(vsource);
 			if let Some(stat) = self.mfs.stat(dtarget).await? {
 				log::debug!("Faking symlink: {:?} -> {:?} ({})", vsource, vtarget, stat.hash);
+				self.mfs
+					.mkdirs(dsource.parent().expect("symlink has to have a containing folder"))
+					.await?;
 				if self.mfs.stat(dsource).await?.is_some() {
 					self.mfs.rm_r(dsource).await?;
 				}
