@@ -78,17 +78,16 @@ impl RsyncClient {
 		);
 		anyhow::ensure!(file.is_file(), "Can only request files, {} is not", file);
 		let (data_send, data_recv) = mpsc::channel(10);
-		RequestsInner::refresh_timeout(&mut self.inner.reqs.clone());
-		self.inner
-			.reqs
-			.lock()
-			.unwrap()
-			.requests
-			.as_mut()
-			.context("Client fully exited")?
-			.entry(file.idx)
-			.or_insert(vec![])
-			.push(data_send);
+		{
+			let mut reqs = self.inner.reqs.lock().unwrap();
+			reqs.refresh_timeout();
+			reqs.requests
+				.as_mut()
+				.context("Client fully exited")?
+				.entry(file.idx)
+				.or_insert(vec![])
+				.push(data_send);
+		}
 		let mut write = self.inner.write.lock().await;
 		log::debug!("Requesting index {}: {}", file.idx, file);
 		write.write_i32_le(file.idx as i32).await?;

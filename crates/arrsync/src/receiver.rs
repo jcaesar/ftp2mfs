@@ -44,7 +44,8 @@ impl ReadFilesProcess {
 	/// Phase 2 file receiver
 	async fn process(&mut self) -> Result<()> {
 		loop {
-			RequestsInner::refresh_timeout(&mut self.reqs);
+			RequestsInner::reset_timeout(&mut self.reqs);
+			log::trace!("Awaiting file");
 			let idx = self.read.read_i32_le().await?;
 			if idx == -1 {
 				break Ok(());
@@ -126,7 +127,17 @@ impl RequestsInner {
 		}))
 	}
 
-	pub fn refresh_timeout(reqs: &mut Requests) {
+	fn timeout() -> Instant {
+		Instant::now() + Duration::from_secs_f64(30.)
+	}
+
+	pub fn refresh_timeout(&mut self) {
+		for to in self.timeout.as_mut() {
+			*to = Self::timeout();
+		}
+	}
+
+	pub fn reset_timeout(reqs: &mut Requests) {
 		// according to openrsync's rsync.5, requested indexes may be
 		// 1. reordered
 		// 2. silently skipped
@@ -137,7 +148,7 @@ impl RequestsInner {
 		// kind of against the rsync design.
 		let mut reqs_inner = reqs.lock().unwrap();
 		let spawn = reqs_inner.timeout.is_none();
-		reqs_inner.timeout = Some(Instant::now() + Duration::from_secs_f64(30.)); // TODO: make configurable
+		reqs_inner.timeout = Some(Self::timeout()); // TODO: make configurable
 		if spawn {
 			tokio::spawn(Self::timeout_proc(reqs.clone()));
 		}
