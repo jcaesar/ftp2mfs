@@ -19,6 +19,7 @@ mod fromrsync;
 #[cfg(test)]
 mod globtest;
 mod nabla;
+mod semaphored;
 mod suite;
 mod synlink;
 mod tomfs;
@@ -29,18 +30,45 @@ use crate::tomfs::ToMfs;
 #[derive(Clap, Debug)]
 #[clap(about, version)]
 pub struct Opts {
-	/// FTP username override
-	#[clap(short, long)]
-	user: Option<String>,
-	/// FTP password override
-	#[clap(short, long)]
-	pass: Option<String>,
 	/// IPFS files (mfs) base path
 	#[clap(short, long)]
 	config: PathBuf,
 	/// IPFS api url
-	#[clap(short, long, default_value = "http://localhost:5001/")]
+	#[clap(short, long, default_value = "http://localhost:5001/", env = "IPFS_API")]
 	api: String,
+	#[clap(subcommand)]
+	cmd: Option<Command>,
+}
+
+#[derive(Clap, Debug)]
+pub enum Command {
+	/// Main operation - Sync data from source to MFS
+	#[clap(name = "sync")]
+	SyncData {
+		/// FTP username override
+		#[clap(short, long)]
+		user: Option<String>,
+		/// FTP password override
+		#[clap(short, long)]
+		pass: Option<String>,
+	},
+	/// Verify (and rewrite if necessary) the state file
+	///
+	/// The state file holds a list of files, their sizes and modification dates
+	/// If something else modifies the data folder
+	VerifyState(VerifyState),
+}
+
+#[derive(Clap, Debug)]
+pub struct VerifyState {
+	/// Whether to pretend that files existing in the folder structure but not in the
+	/// state file (thus likely also not on the server) have existed on the server
+	/// until the verify operation.
+	///
+	/// If unset, they'll be deleted on the next sync operation, otherwise only after the
+	/// reprieve period.
+	#[clap(short, long)]
+	allow_reprieve: bool,
 }
 
 #[derive(Deserialize, Debug)]
@@ -74,22 +102,42 @@ async fn main() -> Result<()> {
 
 	env_logger::init();
 
-	let opts: Opts = Opts::parse();
+	let mut opts: Opts = Opts::parse();
+	if opts.cmd.is_none() {
+		opts.cmd = Some(Command::SyncData { user: None, pass: None });
+	}
 
 	let settings = get_settings(&opts.config).context(format!("Loading {:?}", &opts.config))?;
 
 	let out = ToMfs::new(&opts.api, settings)
 		.await
 		.with_context(|| format!("Failed to access mfs on ipfs at {}", opts.api))?;
-	match run_sync(&opts, &out).await {
-		Ok(cid) => log::info!(
-			"Finished sync in {} s, state: {}",
-			(Instant::now() - start).as_secs(),
-			cid
-		),
-		e @ Err(_) => {
-			out.failure_clean_lock().await.ok();
-			e?;
+	match opts.cmd.as_ref().unwrap() {
+		Command::SyncData { .. } => match run_sync(&opts, &out).await.context("sync") {
+			Ok(cid) => log::info!(
+				"Finished sync in {} s, state: {}",
+				(Instant::now() - start).as_secs(),
+				cid
+			),
+			e @ Err(_) => {
+				out.failure_clean_lock().await.ok();
+				e?;
+			}
+		},
+		Command::VerifyState(vs) => {
+			anyhow::ensure!(
+				!out.check_existing().await?,
+				"Working dir {:?} exists - can't start (or resume) verify-state",
+				out.workdir()
+			);
+			match run_check(&vs, &out).await.context("verify-state") {
+				Ok(()) => log::info!("Finished check-state in {} s.", (Instant::now() - start).as_secs()),
+				e @ Err(_) => {
+					// Can't resume a failed meta verification
+					out.failure_clean_all().await.ok();
+					e?;
+				}
+			}
 		}
 	}
 
@@ -100,13 +148,7 @@ async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<String> {
 	let settings = out.settings();
 	let mut suite = suite::make(&opts, &settings)?;
 
-	let current_set = out.prepare().await.with_context(|| {
-		format!(
-			"Failed to prepare mfs target folder in {:?} (and read current data state from {:?})",
-			settings.workdir.as_ref().unwrap(),
-			&settings.target
-		)
-	})?;
+	let current_set = out.prepare().await?;
 
 	let ignore = ignore(&settings.ignore).context("Constructing GlobSet for ignore list")?;
 
@@ -144,6 +186,24 @@ async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<String> {
 		.context("Sync failure")?;
 
 	Ok(cid)
+}
+
+async fn run_check(opts: &VerifyState, out: &ToMfs) -> Result<()> {
+	let settings = out.settings();
+	let fake_deleted = if opts.allow_reprieve {
+		Duration::from_secs(0)
+	} else {
+		settings.reprieve
+	};
+	let fake_deleted = Utc::now() - chrono::Duration::from_std(fake_deleted).context("Reprieve duration")?;
+
+	let current_set = out.prepare().await?;
+
+	out.check_state(current_set, fake_deleted)
+		.await
+		.context("Recursively inspect existing files")?;
+
+	Ok(())
 }
 
 pub(crate) fn ignore<V: AsRef<[T]>, T: AsRef<str>>(base: V) -> Result<Gitignore> {

@@ -25,10 +25,16 @@ pub fn make(opts: &Opts, settings: &Settings) -> Result<Box<dyn Suite>> {
 	} else {
 		None
 	};
-	for user in opts.user.as_deref().or(settings.user.as_deref()).or(default_username) {
+	if let Some(user) = settings.user.as_deref().or(default_username) {
 		source.set_username(user).ok().context("Username into URL")?;
 	}
-	for pass in opts.pass.as_deref().or(settings.pass.as_deref()) {
+	if let Some(pass) = settings.pass.as_deref() {
+		source.set_password(Some(pass)).ok().context("Password into URL")?;
+	}
+	if let Some(super::Command::SyncData { user: Some(user), .. }) = &opts.cmd {
+		source.set_username(user).ok().context("Username into URL")?;
+	}
+	if let Some(super::Command::SyncData { pass: Some(pass), .. }) = &opts.cmd {
 		source.set_password(Some(pass)).ok().context("Password into URL")?;
 	}
 	match settings.source.scheme() {

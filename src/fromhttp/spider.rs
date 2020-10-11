@@ -1,5 +1,5 @@
-use super::semaphored::*;
 use crate::nabla::{FileInfo, SyncInfo};
+use crate::semaphored::*;
 use anyhow::{Context, Result};
 use ignore::gitignore::Gitignore;
 use reqwest::header::*;

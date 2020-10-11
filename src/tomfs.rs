@@ -30,7 +30,7 @@ impl ToMfs {
 		})
 	}
 
-	fn workdir(&self) -> &Path {
+	pub fn workdir(&self) -> &Path {
 		&self.settings.workdir.as_ref().unwrap()
 	}
 	fn curr(&self) -> &Path {
@@ -71,6 +71,15 @@ impl ToMfs {
 	}
 
 	pub async fn prepare(&self) -> Result<SyncInfo> {
+		self.prepare_inner().await.with_context(|| {
+			format!(
+				"Failed to prepare mfs target folder in {:?} (and read current data state from {:?})",
+				self.settings.workdir.as_ref().unwrap(),
+				&self.settings.target
+			)
+		})
+	}
+	async fn prepare_inner(&self) -> Result<SyncInfo> {
 		self.mfs.rm_r(self.prev()).await.ok();
 		let recovery_required = self.check_existing().await?;
 		self.mfs.mkdirs(self.sync()).await?;
@@ -92,12 +101,15 @@ impl ToMfs {
 			self.get_state(self.currmeta()).await
 		}
 	}
-	async fn check_existing(&self) -> Result<bool> {
+	pub async fn check_existing(&self) -> Result<bool> {
 		if self.mfs.stat(self.sync()).await?.is_some() {
 			if self.mfs.stat(self.piddir()).await?.is_some() {
 				let list = self.mfs.ls(self.piddir()).await?;
 				if !list.is_empty() {
-					bail!("pidfiles {:?} exists in {:?}", list, self.piddir()) // TODO: Error message
+					bail!(
+						"pidfiles exist: {:?}",
+						list.iter().map(|name| self.piddir().join(name)).collect::<Vec<_>>()
+					)
 				} else {
 					Ok(true)
 				}
@@ -277,7 +289,7 @@ impl ToMfs {
 					} else {
 						Ok(())
 					};
-					sender.send(res).await.expect("Parallelism synchronization");
+					sender.send(res).await.ok();
 				});
 			}
 			if let Some(a) = get.pop() {
@@ -289,7 +301,7 @@ impl ToMfs {
 				let mfs = self.mfs.clone();
 				tokio::spawn(async move {
 					let res = mfs.put(&pth, stream).await.context(format!("Requisiton: {:?}", &a));
-					sender.send(res).await.expect("Parallelism synchronization");
+					sender.send(res).await.ok();
 				});
 			}
 			if running > max_running - 2 {
@@ -353,6 +365,134 @@ impl ToMfs {
 			.expect("Synced, sync result vanished")
 			.hash)
 	}
+	pub async fn check_state(&self, known_state: SyncInfo, fake_deleted: DateTime<Utc>) -> Result<SyncInfo> {
+            // TODO: always do this, not only on check
+            let data_hash = self.mfs.stat(self.syncdata()).await?.context("Synced data folder missing")?.hash;
+            if let Some(known_hash) = &known_state.cid {
+                if *known_hash != data_hash {
+                    log::warn!("Actual current CID {} of {:?} and remembered CID {} differ", data_hash, self.syncdata(), known_hash);
+                }
+            }
+
+		struct P {
+			known: SyncInfo,
+			inferred: SyncInfo,
+			fake_deleted: DateTime<Utc>,
+			abort: bool,
+			base: PathBuf,
+			mfs: mfs::Mfs,
+		}
+		use crate::nabla::FileInfo;
+		use crate::semaphored::Semaphored;
+		use std::sync::{Arc, Mutex};
+		type PP = Arc<Semaphored<Mutex<P>>>;
+
+		let pp: PP = Arc::new(Semaphored::new(
+			Mutex::new(P {
+				known: known_state,
+				inferred: SyncInfo::new(),
+				abort: false,
+				fake_deleted,
+				base: self.syncdata(),
+				mfs: self.mfs.clone(),
+			}),
+			4,
+		));
+
+		#[async_recursion::async_recursion]
+		async fn check(c: PathBuf, pp: PP) -> Result<()> {
+			let p = pp.acquire().await;
+			let (mfs, base, link_target);
+			{
+				let p = p.lock().unwrap();
+				if p.abort {
+					return Ok(());
+				}
+				link_target = p.known.symlinks.get(&c).map(|p| p.to_owned());
+				mfs = p.mfs.clone();
+				base = p.base.clone();
+			};
+			let stat = mfs.stat(base.join(&c)).await?.context(format!(
+				"{:?} was in a directory listing, but stat says it does not exist",
+				&c
+			))?;
+			log::debug!("Inspecting {:?}: {:?}", c, stat);
+			if let Some(link_target) = link_target {
+                let link_target = c.parent().expect("not /").join(&link_target);
+				if let Some(tstat) = mfs
+					.stat(base.join(&link_target))
+					.await?
+				{
+					if tstat.hash == stat.hash {
+                        p.lock().unwrap().inferred.symlinks.insert(c, link_target);
+					} else {
+						log::info!(
+							"Pretending symlink {:?} -> {:?} doesn't exist because hashes don't match{}.",
+							c,
+							link_target,
+							if stat.typ == "directory" {
+								" (this is normal for self-referential links)"
+							} else {
+								""
+							}
+						);
+					}
+				}
+			} else {
+				match stat.typ.as_str() {
+					"file" => {
+						let mut p = p.lock().unwrap();
+						let i = if let Some(e) = p.known.files.remove(&c) {
+							e
+						} else {
+							log::info!("Found unregistered file: {:?}", c);
+							FileInfo {
+								s: Some(stat.size as usize),
+								t: None,
+								deleted: Some(p.fake_deleted),
+							}
+						};
+						assert!(p.inferred.files.insert(c, i).is_none());
+					}
+					"directory" => {
+						let t = mfs
+							.ls(base.join(&c))
+							.await?
+							.into_iter()
+							.map(|e| tokio::spawn(check(c.join(e), pp.clone())))
+							.collect::<Vec<_>>();
+						pp.add_permits(1);
+						for j in t {
+							match j.await.expect("Executor went mad") {
+								Ok(()) => (),
+								Err(e) => {
+									p.lock().unwrap().abort = true;
+									pp.add_permits(1000);
+									return Err(e);
+								}
+							}
+						}
+						p.forget_permit();
+					}
+					t => bail!("Unknown file type: {}", t),
+				}
+			}
+			Ok(())
+		}
+
+		check(PathBuf::new(), pp.clone()).await?;
+
+		let p = Arc::try_unwrap(pp).ok().expect("all checks done or aborted");
+		let mut p = p.into_inner().await.into_inner().unwrap();
+		for (d, _) in p.known.files.drain() {
+			log::info!("File {:?} has vanished", d);
+		}
+
+                p.inferred.cid = Some(data_hash);
+		self.write_meta(&p.inferred).await?;
+		self.finalize().await?;
+		Ok(p.inferred)
+	}
 	async fn finalize(&self) -> Result<()> {
 		if self.mfs.stat(self.curr()).await?.is_some() {
 			self.mfs.mv(self.curr(), self.prev()).await?
@@ -362,11 +502,16 @@ impl ToMfs {
 		self.mfs.rm_r(self.currpid()).await?;
 		Ok(())
 	}
+
 	pub async fn failure_clean_lock(&self) -> Result<()> {
 		self.mfs.rm_r(self.currpid()).await.ok();
 		self.mfs.rm(self.lockf()).await?;
 		// Can't remove the sync pid dir, as there is no rmdir (that only removes empty dirs)
 		// and rm -r might remove a lockfile that was just created
+		Ok(())
+	}
+	pub async fn failure_clean_all(&self) -> Result<()> {
+		self.mfs.rm_r(self.workdir()).await.ok();
 		Ok(())
 	}
 

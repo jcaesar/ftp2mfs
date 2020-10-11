@@ -1,13 +1,12 @@
+use super::semaphored::*;
 use crate::nabla::SyncInfo;
 use crate::suite::*;
 use anyhow::{Context as _, Result};
 use futures::AsyncRead;
 use ignore::gitignore::Gitignore;
-use semaphored::*;
 use std::path::Path;
 use url::Url;
 
-mod semaphored;
 mod spider;
 
 type Client = Semaphored<reqwest::Client>;

@@ -21,7 +21,7 @@ impl SyncActs {
 			if !ups.files.contains_key(f) {
 				let now = Utc::now();
 				let deleted = i.deleted.unwrap_or_else(|| now);
-				if now.signed_duration_since(deleted) < reprieve {
+				if now.signed_duration_since(deleted) < reprieve && !ups.symlinks.contains_key(f) {
 					ups.files.insert(
 						f.clone(),
 						FileInfo {
