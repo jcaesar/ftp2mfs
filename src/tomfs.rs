@@ -366,13 +366,23 @@ impl ToMfs {
 			.hash)
 	}
 	pub async fn check_state(&self, known_state: SyncInfo, fake_deleted: DateTime<Utc>) -> Result<SyncInfo> {
-            // TODO: always do this, not only on check
-            let data_hash = self.mfs.stat(self.syncdata()).await?.context("Synced data folder missing")?.hash;
-            if let Some(known_hash) = &known_state.cid {
-                if *known_hash != data_hash {
-                    log::warn!("Actual current CID {} of {:?} and remembered CID {} differ", data_hash, self.syncdata(), known_hash);
-                }
-            }
+		// TODO: always do this, not only on check
+		let data_hash = self
+			.mfs
+			.stat(self.syncdata())
+			.await?
+			.context("Synced data folder missing")?
+			.hash;
+		if let Some(known_hash) = &known_state.cid {
+			if *known_hash != data_hash {
+				log::warn!(
+					"Actual current CID {} of {:?} and remembered CID {} differ",
+					data_hash,
+					self.syncdata(),
+					known_hash
+				);
+			}
+		}
 
 		struct P {
 			known: SyncInfo,
@@ -418,13 +428,10 @@ impl ToMfs {
 			))?;
 			log::debug!("Inspecting {:?}: {:?}", c, stat);
 			if let Some(link_target) = link_target {
-                let link_target = c.parent().expect("not /").join(&link_target);
-				if let Some(tstat) = mfs
-					.stat(base.join(&link_target))
-					.await?
-				{
+				let link_target = c.parent().expect("not /").join(&link_target);
+				if let Some(tstat) = mfs.stat(base.join(&link_target)).await? {
 					if tstat.hash == stat.hash {
-                        p.lock().unwrap().inferred.symlinks.insert(c, link_target);
+						p.lock().unwrap().inferred.symlinks.insert(c, link_target);
 					} else {
 						log::info!(
 							"Pretending symlink {:?} -> {:?} doesn't exist because hashes don't match{}.",
@@ -488,7 +495,7 @@ impl ToMfs {
 			log::info!("File {:?} has vanished", d);
 		}
 
-                p.inferred.cid = Some(data_hash);
+		p.inferred.cid = Some(data_hash);
 		self.write_meta(&p.inferred).await?;
 		self.finalize().await?;
 		Ok(p.inferred)

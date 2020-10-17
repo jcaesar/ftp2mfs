@@ -1026,6 +1026,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperprov"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-recursion",
+ "clap",
+ "failure",
+ "futures-util",
+ "humantime 2.0.1",
+ "ipfs-api",
+ "lazy_static",
+ "log",
+ "pretty_env_logger",
+ "priority-queue",
+ "rand 0.7.3",
+ "tokio",
+]
+
+[[package]]
 name = "idna"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1668,6 +1687,26 @@ name = "precomputed-hash"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "925383efa346730478fb4838dbe9137d2a47675ad789c546d150a6e1dd4ab31c"
+
+[[package]]
+name = "pretty_env_logger"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "926d36b9553851b8b0005f1275891b392ee4d2d833852c417ed025477350fb9d"
+dependencies = [
+ "env_logger",
+ "log",
+]
+
+[[package]]
+name = "priority-queue"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e51e18113edd707f361302ce1229da05854e786d78f03e1eddae3f1ffb8da663"
+dependencies = [
+ "autocfg 1.0.1",
+ "indexmap",
+]
 
 [[package]]
 name = "proc-macro-error"
