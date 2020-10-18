@@ -7,13 +7,13 @@ use rand::prelude::*;
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::default::Default;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::signal::unix::{signal, SignalKind};
-use tokio::stream::StreamExt;
+use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 use tokio::task::JoinHandle;
-use tokio::time::Instant;
-use tokio::time::{delay_for, delay_until, Duration};
+use tokio::time::{delay_for, timeout, Duration, Instant};
 
 #[derive(Clap, Debug)]
 #[clap(about, version)]
@@ -65,7 +65,7 @@ lazy_static::lazy_static! {
 	static ref GEN : AsyncMutex<bool> = Default::default(); // Lock so only one walk is active in parallel
 	static ref J : Semaphore = Semaphore::new(OPTS.parallel_reprovides);
 	static ref CLIENTS : Vec<IpfsClient> = std::iter::repeat(())
-			.take(OPTS.parallel_reprovides / 10)
+			.take(std::cmp::max(1, OPTS.parallel_reprovides / 10))
 			.map(|()| ipfs_api::TryFromUri::from_str(&OPTS.api).expect("IPFS API URL"))
 			.collect();
 }
@@ -78,6 +78,7 @@ async fn refresh() -> Result<()> {
 	struct Walk {
 		s: Semaphore,
 		g: bool,
+		i: AtomicU64,
 	}
 	impl Walk {
 		fn jump(s: &str, f: &mut FolderTree, g: bool) {
@@ -111,6 +112,7 @@ async fn refresh() -> Result<()> {
 								// As a neat little side effect, a parent folder will always be
 								// provided before its children (not necessarily breadth or depth first though)
 								q.push(hash.clone(), Reverse(Instant::now()));
+								self.i.fetch_add(1, Ordering::SeqCst);
 								log::info!("Found {} ({})", hash, name);
 							}
 							if typ == 1 {
@@ -169,6 +171,7 @@ async fn refresh() -> Result<()> {
 		use std::collections::hash_map::Entry::*;
 		let same = s.iter().all(|s| tree.tree.contains_key(s));
 		if same {
+			log::debug!("No news: {}", s.join(", "));
 			return Ok(());
 		} else {
 			*gen = !*gen;
@@ -194,33 +197,49 @@ async fn refresh() -> Result<()> {
 	let w = Arc::new(Walk {
 		s: Semaphore::new(20),
 		g: *gen,
+		i: (sw.len() as u64).into(),
 	});
-	let w = sw
+	let sw = sw
 		.into_iter()
 		.map(|s| tokio::spawn(w.clone().step(s, None)))
 		.collect::<Vec<_>>();
-	for w in w {
-		w.await??;
+	for sw in sw {
+		sw.await??;
 	}
-	TREE.lock().unwrap().tree.retain(|_, e| e.gen == *gen);
+	let mut tree = TREE.lock().unwrap();
+	let rm = tree
+		.tree
+		.iter()
+		.filter(|(_, e)| e.gen != *gen)
+		.map(|(k, _)| k.clone())
+		.collect::<Vec<_>>();
+	let rml = rm.len();
+	for e in rm {
+		tree.tree.remove(&e);
+		tree.sched.remove(&e); // won't catch the ones that are currently in flight
+	}
+	log::info!(
+		"Finished exploring, found {} new, phased out {} old, now have {}",
+		w.i.load(Ordering::SeqCst), // Mh, could be calculated as current tree len + rml - original tree len
+		rml,
+		tree.tree.len(),
+	);
 	Ok(())
 }
 
-async fn refresh_proc() -> Result<()> {
-	let mut usr1 = signal(SignalKind::user_defined1())?.timeout(*OPTS.reresolve_root);
-	let mut running: Option<JoinHandle<Result<()>>> = Some(tokio::spawn(refresh()));
+async fn refresh_proc(wup: &mut Sender<()>) -> Result<()> {
+	let mut usr1 = signal(SignalKind::user_defined1())?;
 	loop {
-		usr1.try_next().await.ok();
-		if let Some(running) = running.take() {
-			running.await??;
-		}
-		running = Some(tokio::spawn(refresh()));
+		let next = timeout(*OPTS.reresolve_root, usr1.recv());
+		refresh().await?;
+		wup.send(()).await?;
+		next.await.ok();
 	}
 }
 
-async fn refresh_wrapper() {
+async fn refresh_wrapper(mut wup: Sender<()>) {
 	loop {
-		match refresh_proc().await {
+		match refresh_proc(&mut wup).await {
 			Ok(()) => unreachable!(),
 			Err(e) => {
 				log::error!("Searching {}: {:?}", OPTS.path.join(", "), e);
@@ -236,7 +255,8 @@ async fn main() -> Result<()> {
 	if !OPTS.files && !OPTS.folders {
 		anyhow::bail!("Neither --files nor --folders is specified");
 	}
-	tokio::spawn(refresh_wrapper());
+	let (tx, mut rx) = channel::<()>(1);
+	tokio::spawn(refresh_wrapper(tx));
 	loop {
 		let now = Instant::now();
 		let mut next = now + Duration::from_secs(10); // lazy coding: poll if we have no items
@@ -244,7 +264,7 @@ async fn main() -> Result<()> {
 		{
 			let mut l = TREE.lock().unwrap();
 			if let Some((_, Reverse(t))) = l.sched.peek() {
-				next = std::cmp::min(next, *t);
+				next = *t;
 				if next < now {
 					provide = Some(l.sched.pop().unwrap().0);
 				}
@@ -259,15 +279,13 @@ async fn main() -> Result<()> {
 				let te = TREE.lock().unwrap().tree.get(&provide).map(|e| e.nam.to_owned());
 				if let Some(te) = te {
 					let lee = Duration::from_secs(300);
-					let req = client().dht_provide(&provide).timeout(lee);
-					let res = req.try_collect::<Vec<_>>().await.map(|_| ());
+					let req = client().dht_provide(&provide);
+					let res = timeout(lee, req.try_collect::<Vec<_>>()).await.map(|_| ());
 					let now = Instant::now();
-					let lev = if res.is_ok() && now < next + lee {
-						log::Level::Info
-					} else if res.is_ok() {
-						log::Level::Warn
-					} else {
-						log::Level::Error
+					let lev = match (res.is_ok(), now < next + lee) {
+						(true, true) => log::Level::Info,
+						(true, _) => log::Level::Warn,
+						(_, _) => log::Level::Error,
 					};
 					let mut wait = now - current;
 					wait -= Duration::from_nanos(wait.subsec_nanos() as u64);
@@ -285,6 +303,8 @@ async fn main() -> Result<()> {
 				}
 			});
 		}
-		delay_until(next).await;
+		if now < next {
+			timeout(next - now, rx.recv()).await.ok();
+		}
 	}
 }
