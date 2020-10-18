@@ -8,5 +8,5 @@ exec docker run --rm -ti \
 	-v $PWD/ekidd-cache:/home/rust/.cargo/registry \
 	ekidd/rust-musl-builder bash -c '
 		sudo chown rust:rust target ~/.cargo/registry \
-		&& cargo build --release --locked
+		&& cargo build --release --locked --all
 	'

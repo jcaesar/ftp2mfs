@@ -3,6 +3,8 @@
 Syncs folders into IPFS's mutable file system (the directory structure accessible through `ipfs files …`).
 Despite the name, FTP2MFS is capable of reading from FTP, HTTP directory listings, rsyncd, and the local filesystem.
 
+Beware: ftp2mfs can be used to easily mirror several 100 GB in a few hours, and keep them in sync with upstream and on the local IPFS node. IPFS is not necessarily able to keep that much content available to the network from one node, see [hyperprov](./hyperprov) for an explanation and a solution.
+
 ## Usage
 You need to create a configuration file that specifies what to sync, e.g. minimally:
 ```yaml
