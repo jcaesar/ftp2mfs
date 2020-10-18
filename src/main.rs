@@ -155,8 +155,7 @@ async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<String> {
 	let sync_start = Utc::now();
 
 	let ups = suite.recurse(ignore).await.context("Retrieving file list")?;
-	let sa =
-		SyncActs::new(current_set, ups, settings.reprieve).context("Internal error: failed to generate delta")?;
+	let sa = SyncActs::new(current_set, ups, &settings).context("Internal error: failed to generate delta")?;
 	let stats = sa.stats();
 	let deletestats = match sa.delete.is_empty() {
 		true => "".to_owned(),

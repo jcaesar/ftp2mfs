@@ -164,8 +164,7 @@ impl ToMfs {
 		// (one catch: files of same size have to be assumed old)
 		let mut curr = self.get_state(self.currmeta()).await?;
 		let sync = self.get_state(self.syncmeta()).await?;
-		let SyncActs { get, delete, .. } =
-			SyncActs::new(curr.clone(), sync.clone(), std::time::Duration::from_secs(0))?;
+		let SyncActs { get, delete, .. } = SyncActs::new(curr.clone(), sync.clone(), &self.settings)?;
 		for (d, _) in delete.iter() {
 			if !self.mfs.stat(self.syncdata().join(d)).await?.is_some() {
 				curr.files.remove(d);
@@ -254,6 +253,7 @@ impl ToMfs {
 			mut meta,
 			mut get,
 			mut delete,
+			sym,
 		} = sa;
 		meta.cid = None;
 		self.write_meta(&meta).await?;
@@ -313,18 +313,22 @@ impl ToMfs {
 			res?
 		}
 
-		let symlink_solution = crate::synlink::resolve(meta.symlinks.clone(), self.settings.max_symlink_cycle);
 		// Contents of the old "symlinks" haven't been updated, delete
-		for (_, vsource) in symlink_solution.iter().rev() {
+		for (_, vsource) in sym.iter().rev() {
 			self.mfs.rm_r(self.syncdata().join(vsource)).await.ok();
 		}
 		// And refresh
-		for (vtarget, vsource) in symlink_solution.iter().rev() {
+		for (vtarget, vsource) in sym.iter().rev() {
 			// TODO: only do it if anything in target has changed
 			let dtarget = &self.syncdata().join(vtarget);
 			let dsource = &self.syncdata().join(vsource);
 			if let Some(stat) = self.mfs.stat(dtarget).await? {
-				log::debug!("Faking symlink: {:?} -> {:?} ({})", vsource, vtarget, stat.hash);
+				log::info!(
+					"Faking symlink: /{} -> /{} ({})",
+					vsource.to_string_lossy(),
+					vtarget.to_string_lossy(),
+					stat.hash
+				);
 				self.mfs
 					.mkdirs(dsource.parent().expect("symlink has to have a containing folder"))
 					.await?;

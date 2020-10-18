@@ -1,13 +1,13 @@
 [package]
 name = "ftp2mfs"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Julius Michaelis <gitter@liftm.de>"]
 edition = "2018"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/jcaesar/ftp2mfs"
 categories = ["command-line-utilities"]
-keywords = ["ftp", "ipfs", "mfs"]
+keywords = ["ftp", "http", "rsync", "filesystem", "ipfs", "mfs"]
 description = "Utility for syncing FTP folders into IPFS"
 
 [dependencies]

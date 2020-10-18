@@ -4,7 +4,18 @@ use std::path::{Path, PathBuf};
 
 /// Generates a list of copy operations that emulates a set of symlinks, while maximally traversing
 /// cycles n times
-pub fn resolve(mut m: HashMap<PathBuf, PathBuf>, n: u64) -> Vec<(PathBuf, PathBuf)> {
+pub fn resolve<P1, PI1, P2, PI2>(
+	mut m: HashMap<PathBuf, PathBuf>,
+	n: u64,
+	changes: P1,
+	added_symlinks: P2,
+) -> Vec<(PathBuf, PathBuf)>
+where
+	P1: Iterator<Item = PI1>,
+	PI1: AsRef<Path>,
+	P2: Iterator<Item = PI2>,
+	PI2: AsRef<Path>,
+{
 	cleanup_weirds(&mut m);
 	let m = resolve_links(m);
 	/* Now we got a list of symlinks that don't contain other symlinks in their path
@@ -47,10 +58,11 @@ pub fn resolve(mut m: HashMap<PathBuf, PathBuf>, n: u64) -> Vec<(PathBuf, PathBu
 	let mut stack: Vec<&Path> = vec![];
 	let mut run = vec![];
 	let mut trav = vec![];
-	for e in m.keys() {
-		if previous.contains(e.as_path()) {
-			continue;
+	let mut visit = |e: &Path| {
+		if previous.contains(e) {
+			return;
 		}
+		let e = m.get_key_value(e).unwrap().0; // the element from the iterator dies too quickly, so get the equivalent from m
 		log::trace!("Entering symlink graph at {:?}", e);
 		stack.push(e);
 		while let Some(e) = stack.pop() {
@@ -74,6 +86,7 @@ pub fn resolve(mut m: HashMap<PathBuf, PathBuf>, n: u64) -> Vec<(PathBuf, PathBu
 			run.push((dst, e));
 			*visited += 1u64;
 			stack.append(&mut edges.get(e).unwrap_or(&vec![]).clone());
+			// TODO: rotate the edges vector, or sort it by visit count
 		}
 		trav.reserve(run.len());
 		for (f, t) in run.drain(..).rev() {
@@ -82,6 +95,18 @@ pub fn resolve(mut m: HashMap<PathBuf, PathBuf>, n: u64) -> Vec<(PathBuf, PathBu
 		for (k, _) in visited.drain() {
 			previous.insert(k);
 		}
+	};
+	for p in changes {
+		for er in p.as_ref().ancestors() {
+			for es in mrev.get(&er.to_path_buf()) {
+				for e in es {
+					visit(e);
+				}
+			}
+		}
+	}
+	for s in added_symlinks {
+		visit(s.as_ref());
 	}
 	trav
 }
@@ -193,6 +218,10 @@ mod test {
 		v
 	}
 
+	fn nopaths() -> impl Iterator<Item = &'static Path> {
+		std::iter::empty()
+	}
+
 	#[test]
 	fn dropweirds() {
 		let mut weird = set(&[("/a", ""), ("..", ""), ("./.", ""), ("ok", "/")]);
@@ -226,7 +255,7 @@ mod test {
 	#[test]
 	fn chain() {
 		let l = set(&[("a", "b"), ("b", "c")]);
-		let weird = resolve(l, 0);
+		let weird = resolve(l.clone(), 0, vec![Path::new("c")].iter(), nopaths());
 		// In this case, the two symlinks don't have a dependency on each other, so we need to sort
 		assert_eq!(sort(weird), sort(list(&[("c", "b"), ("c", "a")])));
 	}
@@ -234,14 +263,14 @@ mod test {
 	#[test]
 	fn aaaa() {
 		let l = set(&[("a", ".")]);
-		let weird = resolve(l, 2);
+		let weird = resolve(l.clone(), 2, nopaths(), l.keys());
 		assert_eq!(weird, list(&[("", "a"), ("", "a"), ("", "a")]));
 	}
 
 	#[test]
 	fn feight() {
 		let l = set(&[("a", "."), ("b", ".")]);
-		let weird = resolve(l, 1);
+		let weird = resolve(l.clone(), 1, vec![Path::new("c")].iter(), nopaths());
 		// The order of the result is a little bit undefined… :/
 		assert_eq!(sort(weird), sort(list(&[("", "a"), ("", "a"), ("", "b"), ("", "b")])));
 	}
@@ -249,7 +278,14 @@ mod test {
 	#[test]
 	fn sub() {
 		let l = set(&[("a/b", "../d"), ("c", "a")]);
-		let weird = resolve(l, 2);
+		let weird = resolve(l.clone(), 2, vec![Path::new("d")].iter(), nopaths());
 		assert_eq!(weird, list(&[("a", "c"), ("d", "a/b")]));
+	}
+
+	#[test]
+	fn oneoftwo() {
+		let l = set(&[("a", "b"), ("c", "d")]);
+		let weird = resolve(l.clone(), 42, vec![Path::new("b/asdf")].iter(), nopaths());
+		assert_eq!(weird, list(&[("b", "a")]));
 	}
 }

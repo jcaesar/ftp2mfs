@@ -10,11 +10,15 @@ pub struct SyncActs {
 	pub meta: SyncInfo,
 	pub delete: Vec<(PathBuf, bool)>,
 	pub get: Vec<PathBuf>,
+	pub sym: Vec<(PathBuf, PathBuf)>,
 }
 impl SyncActs {
-	pub fn new(cur: SyncInfo, mut ups: SyncInfo, reprieve: std::time::Duration) -> Result<SyncActs> {
-		let reprieve = chrono::Duration::from_std(reprieve)
-			.with_context(|| format!("Outlandish reprieve duration specified: {:?}", reprieve))?;
+	pub fn new(cur: SyncInfo, mut ups: SyncInfo, settings: &super::Settings) -> Result<SyncActs> {
+		let reprieve = chrono::Duration::from_std(settings.reprieve).context(format!(
+			"Outlandish reprieve duration specified: {:?}",
+			settings.reprieve
+		))?;
+
 		// Calculate deleted files (and folders - don't keep empty folders)
 		let mut deletes: HashMap<&Path, bool> = HashMap::new();
 		for (f, i) in cur.files.iter() {
@@ -59,18 +63,28 @@ impl SyncActs {
 		let gets = gets;
 
 		// Finally, calculate optized set of paths to rm -r
-		let deletes: Vec<(PathBuf, bool)> = deletes
+		let optideletes: Vec<(PathBuf, bool)> = deletes
 			.iter()
 			.map(|(x, s)| (x.to_path_buf(), *s))
 			.filter(|(d, _)| !PathAncestors::new(d).skip(1).any(|d| deletes.contains_key(d)))
 			.collect();
 
+		let added_symlinks = ups.symlinks.keys().filter(|k| !cur.symlinks.contains_key(k.as_path()));
+
+		let sym = crate::synlink::resolve(
+			ups.symlinks.clone(),
+			settings.max_symlink_cycle,
+			deletes.keys().chain(gets.iter()).map(|p| *p),
+			added_symlinks,
+		);
+
 		// Ret
 		let gets = gets.into_iter().map(Path::to_path_buf).collect();
 		Ok(SyncActs {
 			meta: ups,
-			delete: deletes,
+			delete: optideletes,
 			get: gets,
+			sym,
 		})
 	}
 
@@ -152,6 +166,7 @@ pub struct FileInfo {
 	pub s: Option<usize>,
 }
 
+// Why did I write this? this exists in std…
 pub struct PathAncestors<'a> {
 	p: Option<&'a Path>,
 }
@@ -196,11 +211,24 @@ mod test {
 		l.iter().map(Into::into).collect()
 	}
 
+	fn exampleset(reprieve: u64) -> crate::Settings {
+		crate::Settings {
+			source: url::Url::parse("rsync:://liftm.de/arrsync/").unwrap(),
+			reprieve: std::time::Duration::from_secs(reprieve),
+			ignore: vec![],
+			user: None,
+			pass: None,
+			workdir: None,
+			target: "/mahmirr".into(),
+			max_symlink_cycle: 3,
+		}
+	}
+
 	#[test]
 	fn all_quiet_in_the_west() {
 		let old = SyncInfo::new();
 		let new = SyncInfo::new();
-		let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0)).unwrap();
+		let sa = SyncActs::new(old, new, &exampleset(0)).unwrap();
 		assert!(sa.get.is_empty(), "{:?}", sa);
 		assert!(sa.delete.is_empty(), "{:?}", sa);
 	}
@@ -209,7 +237,7 @@ mod test {
 	fn no_new_is_good_new() {
 		let old = threenew();
 		let new = threenew();
-		let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0)).unwrap();
+		let sa = SyncActs::new(old, new, &exampleset(0)).unwrap();
 		assert!(sa.get.is_empty(), "{:?}", sa);
 		assert!(sa.delete.is_empty(), "{:?}", sa);
 	}
@@ -218,7 +246,7 @@ mod test {
 	fn allnew_allsync() {
 		let old = SyncInfo::new();
 		let new = threenew();
-		let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0)).unwrap();
+		let sa = SyncActs::new(old, new, &exampleset(0)).unwrap();
 		assert_eq!(toset(&sa.get), abc(), "Three new files: {:?}", sa);
 		assert!(sa.delete.is_empty(), "No existing, no deletions: {:?}", sa);
 	}
@@ -227,7 +255,7 @@ mod test {
 	fn allgone_alldelete() {
 		let new = SyncInfo::new();
 		let old = threenew();
-		let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0)).unwrap();
+		let sa = SyncActs::new(old, new, &exampleset(0)).unwrap();
 		assert_eq!(
 			toset(&sa.delete.iter().map(|(p, _)| p.to_owned()).collect::<Vec<_>>()),
 			vec!["/"].into_iter().map(Into::into).collect::<HashSet<PathBuf>>(),
@@ -241,7 +269,7 @@ mod test {
 	fn keep() {
 		let new = SyncInfo::new();
 		let old = threenew();
-		let sa = SyncActs::new(old, new, std::time::Duration::from_secs(1)).unwrap();
+		let sa = SyncActs::new(old, new, &exampleset(1)).unwrap();
 		assert!(sa.get.is_empty(), "No get {:?}", sa);
 		assert!(sa.delete.is_empty(), "At first, it doesn't know when a file was deleted. So it should need to keep it, no matter how short the retention is: {:?}", sa);
 	}
@@ -253,7 +281,7 @@ mod test {
 		for (_, i) in old.files.iter_mut() {
 			i.deleted = Some(now - chrono::Duration::weeks(100 * 52));
 		}
-		let sa = SyncActs::new(old, new, std::time::Duration::from_secs(1)).unwrap();
+		let sa = SyncActs::new(old, new, &exampleset(1)).unwrap();
 		assert!(sa.get.is_empty(), "No get {:?}", sa);
 		assert_eq!(
 			toset(&sa.delete.iter().map(|(p, _)| p.to_owned()).collect::<Vec<_>>()),
@@ -272,7 +300,7 @@ mod test {
 		new.files.get_mut(&PathBuf::new().join("/a")).unwrap().s = Some(2);
 		old.files.get_mut(&PathBuf::new().join("/b")).unwrap().t = Some(now);
 		new.files.get_mut(&PathBuf::new().join("/b")).unwrap().t = Some(now + chrono::Duration::seconds(1));
-		let sa = SyncActs::new(old, new, std::time::Duration::from_secs(42)).unwrap();
+		let sa = SyncActs::new(old, new, &exampleset(42)).unwrap();
 		assert!(sa.delete.is_empty(), "Don't delete on change {:?}", sa);
 		assert_eq!(toset(&sa.get), stoset(&vec!["/a", "/b"]), "Get changed: {:?}", sa);
 	}
@@ -283,7 +311,7 @@ mod test {
 		let mut new = threenew();
 		let now = Utc::now();
 		new.files.get_mut(&PathBuf::new().join("/a")).unwrap().deleted = Some(now);
-		let sa = SyncActs::new(old, new, std::time::Duration::from_secs(0)).unwrap();
+		let sa = SyncActs::new(old, new, &exampleset(0)).unwrap();
 		assert_eq!(
 			toset(&sa.get),
 			abc(),
