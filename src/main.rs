@@ -56,11 +56,11 @@ pub enum Command {
 	///
 	/// The state file holds a list of files, their sizes and modification dates
 	/// If something else modifies the data folder
-	VerifyState(VerifyState),
+	Scrub(Scrub),
 }
 
 #[derive(Clap, Debug)]
-pub struct VerifyState {
+pub struct Scrub {
 	/// Whether to pretend that files existing in the folder structure but not in the
 	/// state file (thus likely also not on the server) have existed on the server
 	/// until the verify operation.
@@ -124,7 +124,7 @@ async fn main() -> Result<()> {
 				e?;
 			}
 		},
-		Command::VerifyState(vs) => {
+		Command::Scrub(vs) => {
 			anyhow::ensure!(
 				!out.check_existing().await?,
 				"Working dir {:?} exists - can't start (or resume) verify-state",
@@ -187,20 +187,18 @@ async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<String> {
 	Ok(cid)
 }
 
-async fn run_check(opts: &VerifyState, out: &ToMfs) -> Result<()> {
-	let settings = out.settings();
-	let fake_deleted = if opts.allow_reprieve {
-		Duration::from_secs(0)
-	} else {
-		settings.reprieve
-	};
-	let fake_deleted = Utc::now() - chrono::Duration::from_std(fake_deleted).context("Reprieve duration")?;
+async fn run_check(opts: &Scrub, out: &ToMfs) -> Result<()> {
+	let fake_deleted = if opts.allow_reprieve { Some(Utc::now()) } else { None };
 
 	let current_set = out.prepare().await?;
 
-	out.check_state(current_set, fake_deleted)
+	let fix = out
+		.check_state(current_set, fake_deleted)
 		.await
 		.context("Recursively inspect existing files")?;
+	out.apply(fix, &suite::NullProvider::new(), &Utc::now())
+		.await
+		.context("Fixing data folder")?;
 
 	Ok(())
 }

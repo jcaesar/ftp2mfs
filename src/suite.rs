@@ -45,3 +45,23 @@ pub fn make(opts: &Opts, settings: &Settings) -> Result<Box<dyn Suite>> {
 		_ => anyhow::bail!("Invalid source url {}: only ftp is supported", settings.source),
 	}
 }
+
+pub struct NullProvider {
+	url: url::Url,
+}
+impl NullProvider {
+	pub fn new() -> NullProvider {
+		NullProvider {
+			url: url::Url::parse("null:").unwrap(),
+		}
+	}
+}
+#[async_trait::async_trait]
+impl Provider for NullProvider {
+	async fn get(&self, p: &Path) -> Result<Box<dyn AsyncRead + Send + Sync + Unpin>> {
+		anyhow::bail!("Null provider asked to sync {:?}", p);
+	}
+	fn base(&self) -> &url::Url {
+		&self.url
+	}
+}

@@ -369,7 +369,11 @@ impl ToMfs {
 			.expect("Synced, sync result vanished")
 			.hash)
 	}
-	pub async fn check_state(&self, known_state: SyncInfo, fake_deleted: DateTime<Utc>) -> Result<SyncInfo> {
+	pub async fn check_state(
+		&self,
+		known_state: SyncInfo,
+		fake_deleted: Option<DateTime<Utc>>,
+	) -> Result<SyncActs> {
 		// TODO: always do this, not only on check
 		let data_hash = self
 			.mfs
@@ -391,10 +395,12 @@ impl ToMfs {
 		struct P {
 			known: SyncInfo,
 			inferred: SyncInfo,
-			fake_deleted: DateTime<Utc>,
+			fake_deleted: Option<DateTime<Utc>>,
 			abort: bool,
 			base: PathBuf,
 			mfs: mfs::Mfs,
+			to_delete: Vec<PathBuf>,
+			to_reresolve: Vec<PathBuf>,
 		}
 		use crate::nabla::FileInfo;
 		use crate::semaphored::Semaphored;
@@ -409,6 +415,8 @@ impl ToMfs {
 				fake_deleted,
 				base: self.syncdata(),
 				mfs: self.mfs.clone(),
+				to_delete: vec![],
+				to_reresolve: vec![],
 			}),
 			4,
 		));
@@ -433,37 +441,37 @@ impl ToMfs {
 			log::debug!("Inspecting {:?}: {:?}", c, stat);
 			if let Some(link_target) = link_target {
 				let link_target = c.parent().expect("not /").join(&link_target);
-				if let Some(tstat) = mfs.stat(base.join(&link_target)).await? {
-					if tstat.hash == stat.hash {
-						p.lock().unwrap().inferred.symlinks.insert(c, link_target);
-					} else {
-						log::info!(
-							"Pretending symlink {:?} -> {:?} doesn't exist because hashes don't match{}.",
-							c,
-							link_target,
-							if stat.typ == "directory" {
-								" (this is normal for self-referential links)"
-							} else {
-								""
-							}
-						);
-					}
+				if mfs
+					.stat(base.join(&link_target))
+					.await?
+					.filter(|tstat| tstat.hash == stat.hash)
+					.is_none()
+				{
+					p.lock().unwrap().to_reresolve.push(c);
 				}
 			} else {
 				match stat.typ.as_str() {
 					"file" => {
 						let mut p = p.lock().unwrap();
 						let i = if let Some(e) = p.known.files.remove(&c) {
-							e
+							Some(e)
 						} else {
-							log::info!("Found unregistered file: {:?}", c);
-							FileInfo {
-								s: Some(stat.size as usize),
-								t: None,
-								deleted: Some(p.fake_deleted),
-							}
+							p.fake_deleted.map(|fake_deleted| {
+								log::info!("Found unregistered file {:?}, faking existence", c);
+								FileInfo {
+									s: Some(stat.size as usize),
+									t: None,
+									deleted: Some(fake_deleted),
+								}
+							})
 						};
-						assert!(p.inferred.files.insert(c, i).is_none());
+						if let Some(i) = i {
+							assert!(p.inferred.files.insert(c, i).is_none());
+						} else {
+							log::warn!("Found unregistered file {:?}, slating deletion", c);
+							p.to_delete.push(c);
+							// TODO: also insert ancestors and continue as in nabla/SyncActs::new?
+						}
 					}
 					"directory" => {
 						let t = mfs
@@ -496,13 +504,23 @@ impl ToMfs {
 		let p = Arc::try_unwrap(pp).ok().expect("all checks done or aborted");
 		let mut p = p.into_inner().await.into_inner().unwrap();
 		for (d, _) in p.known.files.drain() {
-			log::info!("File {:?} has vanished", d);
+			log::warn!("File {:?} has vanished", d);
 		}
 
 		p.inferred.cid = Some(data_hash);
-		self.write_meta(&p.inferred).await?;
-		self.finalize().await?;
-		Ok(p.inferred)
+		p.inferred.symlinks = p.known.symlinks;
+		let sym = crate::synlink::resolve(
+			p.inferred.symlinks.clone(),
+			self.settings.max_symlink_cycle,
+			p.to_delete.iter(),
+			p.to_reresolve.iter(),
+		);
+		Ok(SyncActs {
+			meta: p.inferred,
+			get: vec![],
+			delete: p.to_delete.into_iter().map(|p| (p, false)).collect(),
+			sym,
+		})
 	}
 	async fn finalize(&self) -> Result<()> {
 		if self.mfs.stat(self.curr()).await?.is_some() {
