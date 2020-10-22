@@ -453,7 +453,20 @@ impl ToMfs {
 				match stat.typ.as_str() {
 					"file" => {
 						let mut p = p.lock().unwrap();
-						let i = if let Some(e) = p.known.files.remove(&c) {
+						let i = if let Some(mut e) = p.known.files.remove(&c) {
+							if let Some(es) = e.s {
+								if es as u64 != stat.size {
+									log::warn!(
+										"Remembered and actual size of {:?} didn't match ({} vs {})",
+										c,
+										es,
+										stat.size
+									);
+									e.s = Some(stat.size as usize);
+								}
+							} else {
+								// Entries without size are weird, let them be
+							}
 							Some(e)
 						} else {
 							p.fake_deleted.map(|fake_deleted| {
