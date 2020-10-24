@@ -7,7 +7,7 @@ license = "MIT"
 readme = "README.md"
 repository = "https://github.com/jcaesar/ftp2mfs"
 categories = ["command-line-utilities"]
-keywords = ["ftp", "http", "rsync", "filesystem", "ipfs", "mfs"]
+keywords = ["ftp", "http", "rsync", "ipfs", "mfs"]
 description = "Utility for syncing FTP folders into IPFS"
 
 [dependencies]
