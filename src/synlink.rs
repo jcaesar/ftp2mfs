@@ -106,7 +106,10 @@ where
 		}
 	}
 	for s in added_symlinks {
-		visit(s.as_ref());
+		let s = s.as_ref();
+		if m.contains_key(s) {
+			visit(s);
+		}
 	}
 	trav
 }

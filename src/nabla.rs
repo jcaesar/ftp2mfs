@@ -43,7 +43,9 @@ impl SyncActs {
 		for (s, _) in cur.symlinks.iter() {
 			if !ups.symlinks.contains_key(s) {
 				// TODO? reprieve for symlinks
-				deletes.insert(s, true /* soft */);
+				for a in PathAncestors::new(s) {
+					deletes.insert(a, true /* soft */);
+				}
 			}
 		}
 
@@ -62,6 +64,13 @@ impl SyncActs {
 		}
 		let gets = gets;
 
+		// As we removed add ancestors from the deletes, do the same for symlinks
+		for k in ups.symlinks.keys() {
+			for a in PathAncestors::new(k) {
+				deletes.remove(a);
+			}
+		}
+
 		// Finally, calculate optized set of paths to rm -r
 		let optideletes: Vec<(PathBuf, bool)> = deletes
 			.iter()
@@ -69,7 +78,11 @@ impl SyncActs {
 			.filter(|(d, _)| !PathAncestors::new(d).skip(1).any(|d| deletes.contains_key(d)))
 			.collect();
 
-		let added_symlinks = ups.symlinks.keys().filter(|k| !cur.symlinks.contains_key(k.as_path()));
+		let added_symlinks = ups
+			.symlinks
+			.iter()
+			.filter(|(k, v)| cur.symlinks.get(k.as_path()) != Some(v))
+			.map(|(k, _)| k);
 
 		let sym = crate::synlink::resolve(
 			ups.symlinks.clone(),
@@ -167,6 +180,7 @@ pub struct FileInfo {
 }
 
 // Why did I write this? this exists in std…
+// Maybe because it includes /
 pub struct PathAncestors<'a> {
 	p: Option<&'a Path>,
 }
@@ -317,6 +331,40 @@ mod test {
 			abc(),
 			"A is marked get though the new has deleted set: {:?}",
 			sa
+		);
+	}
+
+	#[test]
+	fn changed_symlinks() {
+		let mut old = SyncInfo::new();
+		let mut new = SyncInfo::new();
+		old.symlinks.insert("a".into(), "gab".into());
+		old.symlinks.insert("b".into(), "old".into());
+		new.symlinks.insert("b".into(), "new".into());
+		new.symlinks.insert("c".into(), "gaa".into());
+		let sa = SyncActs::new(old, new, &exampleset(0)).unwrap();
+		assert_eq!(
+			sa.delete,
+			vec![("a".into(), true)].into_iter().collect::<Vec<(PathBuf, bool)>>(),
+			"delete for deleted symlink"
+		);
+		let mut sym = sa.sym.into_iter().map(|(_, t)| t).collect::<Vec<_>>();
+		sym.sort();
+		assert_eq!(sym, vec![PathBuf::from("b"), PathBuf::from("c")],);
+	}
+
+	#[test]
+	fn optidelete_knows_symlinks() {
+		let mut old = SyncInfo::new();
+		let mut new = SyncInfo::new();
+		old.symlinks.insert("x/a".into(), "gab".into());
+		old.symlinks.insert("x/b".into(), "old".into());
+		new.symlinks.insert("x/b".into(), "new".into());
+		let sa = SyncActs::new(old, new, &exampleset(0)).unwrap();
+		assert_eq!(
+			sa.delete,
+			vec![("x/a".into(), true)].into_iter().collect::<Vec<(PathBuf, bool)>>(),
+			"Don't delete x or something..."
 		);
 	}
 }
