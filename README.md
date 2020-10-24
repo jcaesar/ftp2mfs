@@ -1,5 +1,7 @@
 # FTP2MFS
 
+[![Crates.io](https://img.shields.io/crates/v/ftp2mfs.svg)](https://crates.io/crates/ftp2mfs)
+
 Syncs folders into IPFS's mutable file system (the directory structure accessible through `ipfs files …`).
 Despite the name, FTP2MFS is capable of reading from FTP, HTTP directory listings, rsyncd, and the local filesystem.
 

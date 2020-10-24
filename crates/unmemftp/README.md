@@ -1,5 +1,8 @@
 # Ummm... unmemFTP!
 
+[![Crates.io](https://img.shields.io/crates/v/unmemftp.svg)](https://crates.io/crates/unmemftp)
+[![Docs.rs](https://docs.rs/unmemftp/badge.svg)](https://docs.rs/unmemftp/)
+
 A quick implementation of a `StorageBackend` for [unFTP](https://crates.io/crates/libunftp) that returns static files from memory — Is intended for testing things that access FTP, and code-quality-wise, you probably don't want to use it outside of your `dev-dependencies`.
 
 See the [tests](./tests/test.rs) for simple usage examples.

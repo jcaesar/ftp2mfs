@@ -1,5 +1,8 @@
 # Asynchronous Retrieving Rust rSYNc Client
 
+[![Crates.io](https://img.shields.io/crates/v/arrsync.svg)](https://crates.io/crates/arrsync)
+[![Docs.rs](https://docs.rs/arrsync/badge.svg)](https://docs.rs/arrsync/)
+
 A tokio-based rsync wire protocol client library for listing files on and downloading from rsyncd servers.
 
 ### Status
