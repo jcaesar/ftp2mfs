@@ -304,8 +304,9 @@ impl ToMfs {
 					sender.send(res).await.ok();
 				});
 			}
-			if running > max_running - 2 {
+			while running > max_running - 2 {
 				receiver.next().await.expect("Paralleism synchronization")?;
+				running -= 1;
 			}
 		}
 		std::mem::drop(sender);
