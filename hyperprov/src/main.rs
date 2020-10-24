@@ -10,6 +10,7 @@ use std::default::Default;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::signal::unix::{signal, SignalKind};
+use tokio::stream::StreamExt;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 use tokio::task::JoinHandle;
@@ -93,17 +94,21 @@ async fn refresh() -> Result<()> {
 		#[async_recursion::async_recursion]
 		async fn step(self: Arc<Self>, s: String, mut h: Option<JoinHandle<Result<()>>>) -> Result<()> {
 			let _ = self.s.acquire().await;
-			let links = client()
-				.ls(Some(&s))
-				.await
-				.context(format!("ls {}", s))
-				.compat()?
-				.objects;
-			{
+			let mut links = client()
+				.ls_with_options(
+					ipfs_api::request::Ls::builder()
+						.path(&s)
+						.stream(true)
+						.size(false)
+						.build(),
+				)
+				.await;
+			while let Some(item) = links.next().await {
+				let item = item.context(format!("ls {}", s)).compat()?.objects;
 				let mut t = TREE.lock().unwrap();
 				let Folders { tree: r, sched: q } = &mut *t;
 				let mut sc = r.remove(&s).unwrap();
-				for ipfs_api::response::IpfsFile { links, .. } in links {
+				for ipfs_api::response::IpfsFile { links, .. } in item {
 					for ipfs_api::response::IpfsFileHeader { typ, hash, name, .. } in links.into_iter() {
 						if r.contains_key(&hash) {
 							Self::jump(&hash, &mut *r, self.g);
@@ -134,8 +139,9 @@ async fn refresh() -> Result<()> {
 						}
 					}
 				}
-				r.insert(s, sc);
+				r.insert(s.clone(), sc);
 			}
+
 			if let Some(h) = h {
 				h.await?
 			} else {

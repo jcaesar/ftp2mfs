@@ -7,7 +7,8 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ipfs-api = "0.8.0-rc.2"
+#ipfs-api = { version = "0.8.0-rc.2", features = ["builder"] }
+ipfs-api = { git = "https://github.com/jcaesar/rust-ipfs-api", rev = "dbf46f10f702a81795c4590766e9cddf1be937ff", features = ["builder"] }
 tokio = { version = "0.2", features = ["sync", "rt-core", "macros", "signal"] }
 anyhow = "1.0"
 failure = "0.1"
