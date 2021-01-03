@@ -239,3 +239,14 @@ fn get_settings(path: &Path) -> Result<(Settings, Vec<u8>)> {
 	);
 	return Ok((struc, bytes));
 }
+
+#[cfg(test)]
+#[ctor::ctor]
+fn init() {
+	env_logger::builder()
+		.is_test(true)
+		.filter(None, log::LevelFilter::Debug)
+		.filter(Some("libunftp"), log::LevelFilter::Warn)
+		.try_init()
+		.unwrap();
+}
