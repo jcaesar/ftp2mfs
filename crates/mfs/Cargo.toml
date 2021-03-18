@@ -16,7 +16,7 @@ description = "A slightly more ergonomic wrapper for ipfs-api's mfs-related func
 bytes = "0.5.4"
 failure = "0.1.8"
 futures = "0.3.5"
-futures-core = "0.3.5"
+futures-core = "0.3.13"
 futures-util = "0.3.5"
 ipfs-api = { version = "0.8.0-rc", features = ["builder"] }
 thiserror = "1.0"
