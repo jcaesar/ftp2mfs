@@ -15,7 +15,7 @@ pub trait Provider {
 #[async_trait::async_trait]
 pub trait Suite {
 	async fn provider(&self) -> Result<Box<dyn Provider>>;
-	async fn recurse(&mut self, ignore: Gitignore) -> Result<SyncInfo>;
+	async fn recurse(&mut self, ignore: Gitignore, solid: Gitignore) -> Result<SyncInfo>;
 }
 
 pub fn make(opts: &Opts, settings: &Settings) -> Result<Box<dyn Suite>> {

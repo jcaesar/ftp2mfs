@@ -40,8 +40,8 @@ impl crate::suite::Suite for Suite {
 			client: Suite::client(),
 		}))
 	}
-	async fn recurse(&mut self, ignore: Gitignore) -> Result<SyncInfo> {
-		spider::Spider::new(Suite::client(), self.source.clone(), ignore)
+	async fn recurse(&mut self, ignore: Gitignore, solid: Gitignore) -> Result<SyncInfo> {
+		spider::Spider::new(Suite::client(), self.source.clone(), ignore, solid)
 			.run()
 			.await
 	}

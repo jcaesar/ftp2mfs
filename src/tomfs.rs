@@ -476,6 +476,7 @@ impl ToMfs {
 									s: Some(stat.size as usize),
 									t: None,
 									deleted: Some(fake_deleted),
+									solid: false,
 								}
 							})
 						};

@@ -30,7 +30,7 @@ impl crate::suite::Suite for Suite {
 	async fn provider(&self) -> Result<Box<dyn Provider>> {
 		Ok(Box::new(self.clone()))
 	}
-	async fn recurse(&mut self, ignore: Gitignore) -> Result<SyncInfo> {
+	async fn recurse(&mut self, ignore: Gitignore, _solid: Gitignore) -> Result<SyncInfo> {
 		let (client, files) = arrsync::RsyncClient::connect(&self.source)
 			.await
 			.context("Connect to rsync server")?;
@@ -57,14 +57,8 @@ impl crate::suite::Suite for Suite {
 				continue;
 			}
 			if file.is_file() {
-				ret.files.insert(
-					path.to_owned(),
-					FileInfo {
-						t: file.mtime,
-						s: Some(file.size as usize),
-						deleted: None,
-					},
-				);
+				ret.files
+					.insert(path.to_owned(), FileInfo::found(file.mtime, Some(file.size as usize)));
 			}
 			if file.is_symlink() {
 				ret.symlinks.insert(

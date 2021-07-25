@@ -14,12 +14,23 @@ use url::Url;
 pub struct Spider {
 	client: Semaphored<reqwest::Client>,
 	ignore: Gitignore,
+	solid: Gitignore,
 	base: Url,
 }
 
 impl Spider {
-	pub fn new(client: Semaphored<reqwest::Client>, base: Url, ignore: Gitignore) -> Arc<Spider> {
-		Arc::new(Spider { client, ignore, base })
+	pub fn new(
+		client: Semaphored<reqwest::Client>,
+		base: Url,
+		ignore: Gitignore,
+		solid: Gitignore,
+	) -> Arc<Spider> {
+		Arc::new(Spider {
+			client,
+			ignore,
+			base,
+			solid,
+		})
 	}
 	pub async fn run(self: Arc<Spider>) -> Result<SyncInfo> {
 		let url = self.base.clone();
@@ -34,7 +45,10 @@ impl Spider {
 	) -> Pin<Box<dyn std::future::Future<Output = Result<Vec<(PathBuf, FileInfo)>>> + Send + 'static>> {
 		Box::pin(async move {
 			let mut jobs = vec![];
-			for r in refs_in(&*self.client.acquire().await, url.clone()).await?.into_iter() {
+			let listing = refs_in(&*self.client.acquire().await, url.clone())
+				.await
+				.with_context(|| format!("Get links on {}", url))?;
+			for r in listing.into_iter() {
 				let sub = match url.join(&r) {
 					Ok(sub) => sub,
 					Err(_) => {
@@ -86,6 +100,10 @@ impl Spider {
 	}
 
 	async fn get_meta(self: Arc<Spider>, url: Url, rel: PathBuf) -> Result<Vec<(PathBuf, FileInfo)>> {
+		if self.solid.matched(&rel, false).is_ignore() {
+			log::debug!("Found ({}, None): considered solid, not HEADed", url);
+			return Ok(vec![(rel, FileInfo::solid())]);
+		}
 		let headers = self
 			.client
 			.acquire()
@@ -113,14 +131,7 @@ impl Spider {
 			.get(CONTENT_LENGTH)
 			.and_then(|h| h.to_str().ok())
 			.and_then(|h| h.parse().ok());
-		let res = (
-			rel,
-			FileInfo {
-				t: lm,
-				s: sz,
-				deleted: None,
-			},
-		);
+		let res = (rel, FileInfo::found(lm, sz));
 		log::debug!("Found {:?}", res);
 		Ok(vec![res])
 	}
@@ -128,9 +139,9 @@ impl Spider {
 
 async fn refs_in(client: &reqwest::Client, url: Url) -> Result<Vec<String>> {
 	log::debug!("Searching {}", url);
-	let req = client.get(url).send().await?;
-	let bytes = std::io::Cursor::new(req.bytes().await?);
-	let doc = Document::from_read(bytes)?;
+	let req = client.get(url).send().await.context("Send request")?;
+	let bytes = std::io::Cursor::new(req.bytes().await.context("Read response")?);
+	let doc = Document::from_read(bytes).context("Parse HTML")?;
 	Ok(doc
 		.find(predicate::Name("a"))
 		.filter_map(|n| n.attr("href").map(|s| s.to_owned()))

@@ -55,7 +55,7 @@ impl SyncActs {
 			if i.deleted.is_some() && cur.files.contains_key(f) {
 				continue;
 			}
-			if !cur.files.get(f).filter(|existing| &i == existing).is_some() {
+			if !cur.files.get(f).filter(|existing| !existing.sync_required(i)).is_some() {
 				gets.insert(&f);
 			}
 			for a in PathAncestors::new(f) {
@@ -177,6 +177,30 @@ pub struct FileInfo {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub deleted: Option<DateTime<Utc>>,
 	pub s: Option<usize>,
+	#[serde(skip_serializing, default)]
+	pub solid: bool,
+}
+
+impl FileInfo {
+	fn sync_required(&self, new: &FileInfo) -> bool {
+		self.deleted.is_some() || (!new.solid && self != new)
+	}
+	pub fn found(t: Option<DateTime<Utc>>, s: Option<usize>) -> FileInfo {
+		FileInfo {
+			t,
+			s,
+			deleted: None,
+			solid: false,
+		}
+	}
+	pub fn solid() -> FileInfo {
+		FileInfo {
+			t: None,
+			s: None,
+			deleted: None,
+			solid: true,
+		}
+	}
 }
 
 // Why did I write this? this exists in std…
@@ -204,11 +228,7 @@ mod test {
 
 	fn threenew() -> SyncInfo {
 		let mut new = SyncInfo::new();
-		let dummyfai = || FileInfo {
-			t: None,
-			s: None,
-			deleted: None,
-		};
+		let dummyfai = || FileInfo::found(None, None);
 		new.files.insert(Into::into("/a"), dummyfai());
 		new.files.insert(Into::into("/b"), dummyfai());
 		new.files.insert(Into::into("/c"), dummyfai());
@@ -235,6 +255,7 @@ mod test {
 			workdir: None,
 			target: "/mahmirr".into(),
 			max_symlink_cycle: 3,
+			solid: vec![],
 		}
 	}
 

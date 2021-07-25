@@ -94,6 +94,11 @@ pub struct Settings {
 	/// Maximum depth up to which self-referential symlink (like x -> .) will be resolved
 	#[serde(default)]
 	max_symlink_cycle: u64,
+	/// List of patterns for files that are never modified
+	///
+	/// Will also skip the metadata retrieval on sources where that is expensive (HTTP, FTP)
+	#[serde(default)]
+	solid: Vec<String>,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -150,11 +155,12 @@ async fn run_sync(opts: &Opts, out: &ToMfs) -> Result<String> {
 
 	let current_set = out.prepare().await?;
 
-	let ignore = ignore(&settings.ignore).context("Constructing GlobSet for ignore list")?;
+	let ignore = globlist(&settings.ignore).context("Constructing GlobSet for ignore list")?;
+	let solid = globlist(&settings.solid).context("Constructing GlobSet for solid file list")?;
 
 	let sync_start = Utc::now();
 
-	let ups = suite.recurse(ignore).await.context("Retrieving file list")?;
+	let ups = suite.recurse(ignore, solid).await.context("Retrieving file list")?;
 	let sa = SyncActs::new(current_set, ups, &settings).context("Internal error: failed to generate delta")?;
 	let stats = sa.stats();
 	let deletestats = match sa.delete.is_empty() {
@@ -203,12 +209,12 @@ async fn run_check(opts: &Scrub, out: &ToMfs) -> Result<()> {
 	Ok(())
 }
 
-pub(crate) fn ignore<V: AsRef<[T]>, T: AsRef<str>>(base: V) -> Result<Gitignore> {
+pub(crate) fn globlist<V: AsRef<[T]>, T: AsRef<str>>(base: V) -> Result<Gitignore> {
 	let mut globs = GitignoreBuilder::new("");
 	for (i, ign) in base.as_ref().iter().map(AsRef::as_ref).enumerate() {
 		globs
 			.add_line(None, ign)
-			.with_context(|| format!("Parse ignore index {}: {}", i, ign))?;
+			.with_context(|| format!("Parse glob list entry {}: {}", i, ign))?;
 	}
 	return Ok(globs.build()?);
 }

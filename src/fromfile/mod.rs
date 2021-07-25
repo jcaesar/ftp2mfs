@@ -22,7 +22,8 @@ impl crate::suite::Suite for Suite {
 	async fn provider(&self) -> Result<Box<dyn Provider>> {
 		Ok(Box::new(self.clone()))
 	}
-	async fn recurse(&mut self, ignore: Gitignore) -> Result<SyncInfo> {
+	async fn recurse(&mut self, ignore: Gitignore, _solid: Gitignore) -> Result<SyncInfo> {
+		// TODO: if this is an sshfs, considering _solid might be worth it.
 		use walkdir::WalkDir;
 		let rpath = |entry: &walkdir::DirEntry| {
 			entry
@@ -75,14 +76,8 @@ impl crate::suite::Suite for Suite {
 			} else if meta.is_file() {
 				let modified = meta.modified()?.into();
 				let size = meta.len() as usize;
-				si.files.insert(
-					rpath.to_path_buf(),
-					FileInfo {
-						t: Some(modified),
-						s: Some(size),
-						deleted: None,
-					},
-				);
+				si.files
+					.insert(rpath.to_path_buf(), FileInfo::found(Some(modified), Some(size)));
 			}
 		}
 		Ok(si)

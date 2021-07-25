@@ -44,8 +44,8 @@ impl crate::suite::Suite for Suite {
 		let conn = self.ftp_connect().await.context("FTP connect for data retrieval")?;
 		Ok(Box::new(provider::FtpProvider::new(conn, self.source.clone())))
 	}
-	async fn recurse(&mut self, ignore: Gitignore) -> Result<SyncInfo> {
+	async fn recurse(&mut self, ignore: Gitignore, solid: Gitignore) -> Result<SyncInfo> {
 		let mut conn = self.ftp_connect().await.context("FTP connect for data list")?;
-		Ok(recursor::Recursor::run(&mut conn, &ignore).await?)
+		Ok(recursor::Recursor::run(&mut conn, &ignore, &solid).await?)
 	}
 }

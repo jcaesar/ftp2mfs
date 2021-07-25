@@ -12,9 +12,10 @@ pub struct Recursor<'a> {
 	base: PathBuf,
 	result: SyncInfo,
 	ignore: &'a Gitignore,
+	solid: &'a Gitignore,
 }
 impl<'a> Recursor<'a> {
-	pub async fn run(ftp: &'a mut FtpStream, ignore: &'a Gitignore) -> Result<SyncInfo> {
+	pub async fn run(ftp: &'a mut FtpStream, ignore: &'a Gitignore, solid: &'a Gitignore) -> Result<SyncInfo> {
 		let wd = ftp
 			.pwd()
 			.await
@@ -24,6 +25,7 @@ impl<'a> Recursor<'a> {
 			base: Path::new(&wd).to_path_buf(),
 			result: SyncInfo::new(), // Marks the sync start time
 			ignore,
+			solid,
 		};
 		r.rec().await?;
 		Ok(r.result)
@@ -56,6 +58,9 @@ impl<'a> Recursor<'a> {
 				if is_dir {
 					self.rec().await?;
 					self.ftp.cdup().await.context("Can't leave FTP directory.")?;
+				} else if self.solid.matched(&name, false).is_ignore() {
+					log::debug!("Not checking metadata for {}: solid", name.to_string_lossy());
+					self.result.files.insert(name, FileInfo::solid());
 				} else {
 					// Appeared in the list but we can't CD to it? Assume it's a file
 					let mt = self.ftp.mdtm(&f).await;
@@ -78,14 +83,12 @@ impl<'a> Recursor<'a> {
 						log::warn!("Could not get mtime or size for {:?}, ignoring", name);
 						continue;
 					}
-					self.result.files.insert(
-						name,
-						FileInfo {
-							t: mt.with_context(|| format!("Can't get mtime for {:?}", fullname))?,
-							s: sz.with_context(|| format!("Can't get size for {:?}", fullname))?,
-							deleted: None,
-						},
+					let found = FileInfo::found(
+						mt.with_context(|| format!("Can't get mtime for {:?}", fullname))?,
+						sz.with_context(|| format!("Can't get size for {:?}", fullname))?,
 					);
+					log::debug!("Found: ({}, {:?})", name.to_string_lossy(), &found);
+					self.result.files.insert(name, found);
 				}
 			}
 			Ok(())
@@ -109,9 +112,13 @@ mod test {
 			.transfer_type(async_ftp::types::FileType::Binary)
 			.await
 			.unwrap();
-		let ups = Recursor::run(&mut memstream(Box::new(abc)).await, &Gitignore::empty())
-			.await
-			.unwrap();
+		let ups = Recursor::run(
+			&mut memstream(Box::new(abc)).await,
+			&Gitignore::empty(),
+			&Gitignore::empty(),
+		)
+		.await
+		.unwrap();
 
 		assert_eq!(
 			ups.files
