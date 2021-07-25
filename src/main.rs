@@ -96,7 +96,7 @@ pub struct Settings {
 	max_symlink_cycle: u64,
 }
 
-#[tokio::main(basic_scheduler)]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
 	let start = Instant::now();
 

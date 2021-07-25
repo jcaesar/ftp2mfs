@@ -155,7 +155,7 @@ mod test {
 		Url::parse("ftp://example.example/example").unwrap()
 	}
 
-	#[tokio::test(basic_scheduler)]
+	#[tokio::test(flavor = "current_thread")]
 	pub async fn get_a() {
 		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url());
 		let content = &mut String::new();
@@ -168,7 +168,7 @@ mod test {
 		assert_eq!(content, "Test file 1");
 	}
 
-	#[tokio::test(basic_scheduler)]
+	#[tokio::test(flavor = "current_thread")]
 	pub async fn get_bc() {
 		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url());
 		let content = &mut String::new();
@@ -181,7 +181,7 @@ mod test {
 		assert_eq!(content, "Test file in a subdirectory");
 	}
 
-	#[tokio::test(basic_scheduler)]
+	#[tokio::test(flavor = "current_thread")]
 	pub async fn get_bc_absdir() {
 		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url());
 		let content = &mut String::new();
@@ -194,7 +194,7 @@ mod test {
 		assert_eq!(content, "Test file in a subdirectory");
 	}
 
-	#[tokio::test(basic_scheduler)]
+	#[tokio::test(flavor = "current_thread")]
 	pub async fn cant_get_d() {
 		let prov = FtpProvider::new(memstream(Box::new(abc)).await, url());
 		let dummy = &mut String::new();

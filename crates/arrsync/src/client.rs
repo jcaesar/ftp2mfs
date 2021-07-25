@@ -1,4 +1,5 @@
 use crate::alluse::*;
+use tokio_util::io::StreamReader;
 
 static NEXT_CLIENT_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -35,16 +36,22 @@ impl RsyncClient {
 		let (path, base) = Self::parse_url(&url)?;
 		let (read, mut write) = Self::stream(&url).await?;
 		let mut read = BufReader::new(read);
-		Self::send_handshake(&mut write, path, base).await?;
+		Self::send_handshake(&mut write, path, base)
+			.await
+			.context("Handshake: send")?;
 		let origin = format!(
 			"{}{}",
 			url.host().expect("Connected to an url without host"),
 			url.port().map(|p| format!("{}", p)).unwrap_or("".to_string())
 		);
-		Self::read_handshake(&mut read, &origin).await?;
+		Self::read_handshake(&mut read, &origin)
+			.await
+			.context("Handshake: receive")?;
 		let mut read = EnvelopeRead::new(read); // Server multiplex start
 		let id = NEXT_CLIENT_ID.fetch_add(1, AtomicOrder::SeqCst);
-		let files = Self::read_file_list(&mut read, id).await?;
+		let files = Self::read_file_list(&mut read, id)
+			.await
+			.context("File list: receive")?;
 		write.write_i32_le(-1).await?;
 		anyhow::ensure!(
 			read.read_i32_le().await? == -1,
@@ -77,7 +84,7 @@ impl RsyncClient {
 			"Requested file from client that was not listed in that client's connect call"
 		);
 		anyhow::ensure!(file.is_file(), "Can only request files, {} is not", file);
-		let (data_send, data_recv) = mpsc::channel(10);
+		let (data_send, mut data_recv) = mpsc::channel(10);
 		{
 			let mut reqs = self.inner.reqs.lock().unwrap();
 			reqs.refresh_timeout();
@@ -92,7 +99,8 @@ impl RsyncClient {
 		log::debug!("Requesting index {}: {}", file.idx, file);
 		write.write_i32_le(file.idx as i32).await?;
 		write.write_all(&[0u8; 16]).await?; // We want no blocks, blocklength, checksum, or terminal block. 4 x 0i32 = 16
-		Ok(tokio::io::stream_reader(data_recv))
+		let stream = async_stream::stream! { while let Some(item) = data_recv.recv().await { yield item; } };
+		Ok(StreamReader::new(stream))
 	}
 	/// Finalizes the connection and returns statistics about the transfer (See [Stats](crate::Stats)).
 	/// All files that have allready been requested will be transferred before the returned future completes.
@@ -110,7 +118,7 @@ impl RsyncClient {
 			};
 			log::debug!("Rsync Stats: {:?}", stats);
 			write.write_i32_le(-1).await?; // EoS
-			write.shutdown();
+			write.shutdown().await.context("Failed to close connection")?;
 			Ok(stats)
 		} else {
 			anyhow::bail!("Only one can close");
@@ -132,7 +140,7 @@ impl RsyncClient {
 		let base = loop {
 			match base.parent() {
 				Some(p) if p == Path::new("") => break base,
-				None => panic!("Getting base element of path {:?}",),
+				None => panic!("Getting base element of path {:?}", base),
 				Some(p) => base = p,
 			};
 		};
@@ -219,7 +227,7 @@ impl RsyncClient {
 		let mut mode_buf = None;
 		let mut mtime_buf = None;
 		loop {
-			let meta = FileEntryStatus(read.read_u8().await?);
+			let meta = FileEntryStatus(read.read_u8().await.context("Status")?);
 			if meta.is_end() {
 				break;
 			}
@@ -297,3 +305,22 @@ impl RsyncClient {
 		Ok(ret)
 	}
 }
+
+/*
+struct Compat1<T> {
+	source: T,
+	internal: Bytes,
+}
+impl<T> Compat1<T>{
+	fn new(source: T) -> Compat1<T> { Compat1 { source, internal: Bytes::new() }}
+}
+impl<E> AsyncRead for Compat1<Receiver<Result<bytes::Bytes, E>>>
+	where E: Into<std::io::Error> {
+	fn poll_read(self: Pin<&mut Self>, cx: &mut std::task::Context, buf: &mut ReadBuf<'_>) -> Poll<Result<(), std::io::Error>> {
+		self.source.
+		while buf.capacity() > 0 {
+			if ! self.internal.is_empty()
+		}
+		Poll::Ready(OK(()))
+	}
+}*/

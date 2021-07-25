@@ -11,45 +11,45 @@ keywords = ["ftp", "http", "rsync", "ipfs", "mfs"]
 description = "Utility for syncing FTP folders into IPFS"
 
 [dependencies]
-clap = "3.0.0-beta.1"
-serde_json = "1.0"
-serde = { version = "1.0", features = ["derive"] }
-chrono = { version = "0.4", features = ["serde"] }
-tokio = { version = "0.2", features = ["macros", "fs"] }
-crossbeam-channel = "0.4"
-humantime = "2.0.0"
-anyhow = "1.0"
-hostname = "0.3"
-nanoid = "0.3"
-ignore = "0.4"
-serde_yaml = "0.8"
-url = { version = "2", features = ["serde"] }
+clap = "3.0.0-beta.2"
+serde_json = "1.0.64"
+serde = { version = "1.0.126", features = ["derive"] }
+chrono = { version = "0.4.19", features = ["serde"] }
+tokio = { version = "1.7.1", features = ["macros", "fs"] }
+crossbeam-channel = "0.5.1"
+humantime = "2.1.0"
+anyhow = "1.0.41"
+hostname = "0.3.1"
+nanoid = "0.4.0"
+ignore = "0.4.18"
+serde_yaml = "0.8.17"
+url = { version = "2.2.2", features = ["serde"] }
 serde-humantime = "0.1.1"
-blake3 = "0.3"
+blake3 = "0.3.8"
 ipfs-mfs = { path = "crates/mfs", version = "0.2" }
-async_ftp = "4.0.1"
-async-trait = "0.1.31"
-bytes = "0.5.5"
-futures-channel = "0.3.5"
-futures = "0.3.5"
-futures-util = "0.3.5"
-log = "0.4"
-env_logger = "0.7.1"
+async_ftp = "5.0.0"
+async-trait = "0.1.50"
+bytes = "1.0.1"
+futures-channel = "0.3.15"
+futures = "0.3.15"
+futures-util = "0.3.15"
+log = "0.4.14"
+env_logger = "0.8.4"
 bytesize = "1.0.1"
-futures-core = "0.3.5"
-walkdir = "2.3.1"
+futures-core = "0.3.15"
+walkdir = "2.3.2"
 pathdiff = "0.2.0"
-reqwest = { version = "0.10", features = ["gzip", "brotli", "stream"] }
-select = "0.5"
+reqwest = { version = "0.11.3", features = ["gzip", "brotli", "stream"] }
+select = "0.5.0"
 arrsync = { path = "crates/arrsync", version = "0.1" }
-tokio-util = { version = "0.3", features = ["compat"] }
-async-recursion = "0.3.1"
+tokio-util = { version = "0.6.7", features = ["compat"] }
+async-recursion = "0.3.2"
 
 [dev-dependencies]
-libunftp = "0.11"
-tokio = { version = "0.2", features = ["full", "macros"] }
+libunftp = "0.17.4"
+tokio = { version = "1.7.1", features = ["full", "macros"] }
 unmemftp = { path = "crates/unmemftp" }
-ctor = "0.1"
+ctor = "0.1.20"
 
 [workspace]
 members = [

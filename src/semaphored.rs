@@ -14,7 +14,7 @@ impl<T> Semaphored<T> {
 	}
 	pub async fn acquire(&self) -> Permitted<'_, T> {
 		Permitted {
-			p: self.sema.acquire().await,
+			p: self.sema.acquire().await.expect("Never closed, yet closed"),
 			t: &self.t,
 		}
 	}

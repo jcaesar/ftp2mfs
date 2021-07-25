@@ -25,7 +25,7 @@ impl ReadFilesProcess {
 		// TODO: When switching away from anyhow, make sure our error type is cloneable - and send
 		// the real error.
 		let cex = |msg: &str| Err(Error::new(ErrorKind::ConnectionAborted, anyhow::anyhow!("{}", msg)));
-		if let Some(mut current) = self.current.take() {
+		if let Some(current) = self.current.take() {
 			if res.is_err() {
 				current.send(cex("Client exited while reading file")).await.ok();
 			} else {
@@ -34,7 +34,7 @@ impl ReadFilesProcess {
 			}
 		};
 		for (_, cs) in remaining.unwrap().into_iter() {
-			for mut c in cs.into_iter() {
+			for c in cs.into_iter() {
 				c.send(cex("Client exited")).await.ok();
 			}
 		}
@@ -163,7 +163,7 @@ impl RequestsInner {
 			enum Action {
 				ReSleep(Instant),
 				Timeout(Vec<mpsc::Sender<Result<Bytes, tokio::io::Error>>>),
-			};
+			}
 			use Action::*;
 			let action = {
 				let mut reqs = reqs.lock().unwrap();
@@ -183,9 +183,9 @@ impl RequestsInner {
 				}
 			};
 			match action {
-				ReSleep(until) => tokio::time::delay_until(until).await,
+				ReSleep(until) => tokio::time::sleep_until(until).await,
 				Timeout(requests) => {
-					for mut request in requests.into_iter() {
+					for request in requests.into_iter() {
 						tokio::spawn(async move {
 							// Spawn, in case someone is waiting for the wrong thing to
 							// timeout..

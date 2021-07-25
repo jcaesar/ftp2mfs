@@ -13,19 +13,19 @@ description = "A slightly more ergonomic wrapper for ipfs-api's mfs-related func
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bytes = "0.5.4"
+bytes = "1.0.1"
 failure = "0.1.8"
-futures = "0.3.5"
-futures-core = "0.3.5"
-futures-util = "0.3.5"
-ipfs-api = { version = "0.8.0-rc", features = ["builder"] }
-thiserror = "1.0"
-http = "0.2"
+futures = "0.3.15"
+futures-core = "0.3.15"
+futures-util = "0.3.15"
+ipfs-api = { version = "0.11.0", features = ["builder"] }
+thiserror = "1.0.25"
+http = "0.2.4"
 
 [dev-dependencies]
-anyhow = "1.0"
-tokio = { version = "0.2.21", features = ["full", "macros"] }
-rand = "0.7.3"
+anyhow = "1.0.41"
+tokio = { version = "1.7.1", features = ["full", "macros"] }
+rand = "0.8.4"
 
 [lib]
 name = "mfs"

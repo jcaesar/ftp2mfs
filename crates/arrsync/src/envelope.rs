@@ -1,4 +1,5 @@
 use crate::alluse::*;
+use tokio::io::ReadBuf;
 
 /// Strips rsync data frame headers and prints non-data frames as warning messages
 pub struct EnvelopeRead<T: tokio::io::AsyncBufRead + Unpin> {
@@ -22,8 +23,8 @@ impl<T: tokio::io::AsyncBufRead + Unpin> EnvelopeRead<T> {
 	fn poll_err(
 		mut self: Pin<&mut Self>,
 		ctx: &mut std::task::Context<'_>,
-		repoll_buf: &mut [u8],
-	) -> Poll<Result<usize, std::io::Error>> {
+		repoll_buf: &mut ReadBuf,
+	) -> Poll<Result<(), std::io::Error>> {
 		while self.frame_remaining > 0 {
 			let mut pe = self
 				.pending_error
@@ -32,12 +33,15 @@ impl<T: tokio::io::AsyncBufRead + Unpin> EnvelopeRead<T> {
 				.1
 				.clone();
 			let pei = pe.len() - self.frame_remaining; // Ich check dich wek alter bowwochecka
-			match Pin::new(&mut self.read).poll_read(ctx, &mut pe[pei..]) {
+			let rb = &mut ReadBuf::new(&mut pe[pei..]);
+			match Pin::new(&mut self.read).poll_read(ctx, rb) {
 				Poll::Pending => return Poll::Pending,
 				Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-				Poll::Ready(Ok(0)) => break,
-				Poll::Ready(Ok(r)) => {
-					self.frame_remaining -= r;
+				Poll::Ready(Ok(())) => {
+					if rb.filled().len() == 0 {
+						break;
+					}
+					self.frame_remaining -= rb.filled().len();
 					self.pending_error.as_mut().unwrap().1 = pe;
 				}
 			};
@@ -65,8 +69,8 @@ impl<T: tokio::io::AsyncBufRead + Unpin> AsyncRead for EnvelopeRead<T> {
 	fn poll_read(
 		mut self: Pin<&mut Self>,
 		ctx: &mut std::task::Context<'_>,
-		buf: &mut [u8],
-	) -> Poll<Result<usize, std::io::Error>> {
+		buf: &mut ReadBuf<'_>,
+	) -> Poll<Result<(), std::io::Error>> {
 		if self.pending_error.is_some() {
 			return self.poll_err(ctx, buf);
 		}
@@ -77,7 +81,7 @@ impl<T: tokio::io::AsyncBufRead + Unpin> AsyncRead for EnvelopeRead<T> {
 				// Starting to wonder whether it wouldn't be easier to store the future returend by read_u32_le
 				Poll::Pending => return Poll::Pending,
 				Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-				Poll::Ready(Ok([])) if no_pending_header => return Poll::Ready(Ok(0)),
+				Poll::Ready(Ok([])) if no_pending_header => return Poll::Ready(Ok(())),
 				Poll::Ready(Ok([])) => {
 					return Poll::Ready(Err(std::io::Error::new(
 						std::io::ErrorKind::ConnectionAborted,
@@ -116,13 +120,30 @@ impl<T: tokio::io::AsyncBufRead + Unpin> AsyncRead for EnvelopeRead<T> {
 				}
 			}
 		}
-		let request = std::cmp::min(buf.len(), self.frame_remaining as usize);
-		Pin::new(&mut self.read).poll_read(ctx, &mut buf[0..request]).map(|r| {
-			r.map(|r| {
-				self.frame_remaining -= r;
+		let request = std::cmp::min(buf.capacity(), self.frame_remaining as usize);
+		let mut rb = buf.take(request);
+		match Pin::new(&mut self.read).poll_read(ctx, &mut rb) {
+			p @ Poll::Pending => p,
+			e @ Poll::Ready(Err(_)) => e,
+			r @ Poll::Ready(Ok(())) => {
+				let read = rb.filled().len();
+				if log::log_enabled!(log::Level::Trace) {
+					log::trace!(
+						"Read {} / {}:\n{}",
+						read,
+						self.frame_remaining,
+						hexdump::hexdump_iter(rb.filled())
+							.map(|l| l.to_string())
+							.collect::<Vec<_>>()
+							.join("\n")
+					);
+				}
+				std::mem::drop(rb);
+				self.frame_remaining -= read;
+				buf.advance(read);
 				r
-			})
-		})
+			}
+		}
 	}
 }
 

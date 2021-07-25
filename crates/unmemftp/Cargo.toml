@@ -13,9 +13,9 @@ A quick and somewhat dirty library for testing read-only ftp clients, based on l
 """
 
 [dependencies]
-libunftp = "0.11.0"
-tokio = { version = "0.2.21", features = ["full"] }
-async-trait = "0.1.31"
+libunftp = "0.17.4"
+tokio = { version = "1.7.1", features = ["full"] }
+async-trait = "0.1.50"
 
 [dev-dependencies]
-async_ftp = "4.0.1"
+async_ftp = "5.0.0"

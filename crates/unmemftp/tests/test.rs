@@ -12,7 +12,7 @@ fn somefiles() -> MemStorage {
 mod serve {
 	use super::*;
 
-	#[tokio::test(threaded_scheduler)]
+	#[tokio::test(flavor = "multi_thread")]
 	pub async fn accessdirect() {
 		let addr = serve(Box::new(somefiles)).await;
 
@@ -20,7 +20,7 @@ mod serve {
 		retr_test(ftp, "/a", "A").await;
 	}
 
-	#[tokio::test(threaded_scheduler)]
+	#[tokio::test(flavor = "multi_thread")]
 	pub async fn accesspath_no_threaded_scheduler() {
 		let addr = serve(Box::new(somefiles)).await;
 
@@ -28,7 +28,7 @@ mod serve {
 		retr_test(ftp, "/b/c", "BC").await;
 	}
 
-	#[tokio::test(threaded_scheduler)]
+	#[tokio::test(flavor = "multi_thread")]
 	pub async fn cd_and_get() {
 		let addr = serve(Box::new(somefiles)).await;
 
@@ -37,7 +37,7 @@ mod serve {
 		retr_test(ftp, "c", "BC").await;
 	}
 
-	#[tokio::test(threaded_scheduler)]
+	#[tokio::test(flavor = "multi_thread")]
 	pub async fn cannot_cd_to_nowhere() {
 		let addr = serve(Box::new(somefiles)).await;
 
@@ -45,7 +45,7 @@ mod serve {
 		assert!(ftp.cwd("d").await.is_err());
 	}
 
-	#[tokio::test(threaded_scheduler)]
+	#[tokio::test(flavor = "multi_thread")]
 	pub async fn cannot_get_nowhere() {
 		let addr = serve(Box::new(somefiles)).await;
 
@@ -70,29 +70,24 @@ mod serve {
 
 mod acro {
 	use super::*;
-	use libunftp::auth::{Authenticator, DefaultUser};
-	use std::error::Error;
+	use libunftp::auth::{AuthenticationError, Authenticator, DefaultUser};
 	use std::sync::Arc;
 
 	#[derive(Debug)]
 	struct BobAuthenticator {}
 	#[async_trait::async_trait]
 	impl Authenticator<DefaultUser> for BobAuthenticator {
-		async fn authenticate(
-			&self,
-			username: &str,
-			password: &str,
-		) -> Result<DefaultUser, Box<dyn Error + Send + Sync>> {
+		async fn authenticate(&self, username: &str, password: &str) -> Result<DefaultUser, AuthenticationError> {
 			if username == "bob" && password == "bob" {
 				Ok(DefaultUser {})
 			} else {
-				Err("bye!".into())
+				Err(AuthenticationError::ImplPropagated("bye".into(), None))
 			}
 		}
 	}
 
 	// For advanced configurations, start unftp manually
-	#[tokio::test(threaded_scheduler)]
+	#[tokio::test(flavor = "multi_thread")]
 	#[should_panic]
 	pub async fn youre_not_bob() {
 		let addr = "127.0.0.1:46858";
@@ -106,7 +101,7 @@ mod acro {
 		default_ftp_client(addr.parse().unwrap()).await;
 	}
 
-	#[tokio::test(threaded_scheduler)]
+	#[tokio::test(flavor = "multi_thread")]
 	pub async fn you_are_bob() {
 		let addr = "127.0.0.1:46859";
 		let server = libunftp::Server::new(Box::new(somefiles))

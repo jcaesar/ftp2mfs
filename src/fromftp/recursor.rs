@@ -71,7 +71,7 @@ impl<'a> Recursor<'a> {
 							Err(InvalidAddress(_)) => false,
 							Ok(_) => false,
 						}
-					};
+					}
 					if non_fatal_err(&sz) && non_fatal_err(&mt) {
 						log::debug!("MDTM {:?}: {:?}", name, mt);
 						log::debug!("SIZE {:?}: {:?}", name, sz);
@@ -86,7 +86,7 @@ impl<'a> Recursor<'a> {
 							deleted: None,
 						},
 					);
-				};
+				}
 			}
 			Ok(())
 		})
@@ -99,7 +99,7 @@ mod test {
 	use super::*;
 	use std::collections::HashSet;
 
-	#[tokio::test(threaded_scheduler)]
+	#[tokio::test(flavor = "multi_thread")]
 	pub async fn main() {
 		let addr = unmemftp::serve(Box::new(abc)).await;
 

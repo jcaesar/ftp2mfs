@@ -3,11 +3,13 @@ use libunftp::storage::Result as FtpResult;
 use libunftp::storage::StorageBackend;
 use libunftp::storage::{ErrorKind, Fileinfo, Metadata};
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::io::Cursor;
 use std::net::{SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use std::time::{Duration, Instant};
+use tokio::io::AsyncRead;
 use tokio::net::TcpStream;
 
 pub async fn serve(files: Box<dyn Fn() -> MemStorage + Send + Sync>) -> SocketAddr {
@@ -30,7 +32,7 @@ pub async fn serve(files: Box<dyn Fn() -> MemStorage + Send + Sync>) -> SocketAd
 pub async fn connectable(addr: SocketAddr) {
 	let deadline = Instant::now() + Duration::from_secs(15);
 	loop {
-		tokio::time::delay_for(Duration::from_millis(50)).await;
+		tokio::time::sleep(Duration::from_millis(50)).await;
 		if TcpStream::connect(addr).await.is_ok() {
 			return;
 		}
@@ -179,7 +181,6 @@ impl Metadata for MemMetadata {
 
 #[async_trait::async_trait]
 impl<U: Send + Sync + std::fmt::Debug> StorageBackend<U> for MemStorage {
-	type File = Cursor<Vec<u8>>;
 	type Metadata = MemMetadata;
 
 	async fn metadata<P: AsRef<Path> + Send>(&self, _user: &Option<U>, path: P) -> FtpResult<Self::Metadata> {
@@ -207,15 +208,15 @@ impl<U: Send + Sync + std::fmt::Debug> StorageBackend<U> for MemStorage {
 			.collect())
 	}
 
-	async fn get<P: AsRef<Path> + Send>(
+	async fn get<P: AsRef<Path> + Send + Debug>(
 		&self,
 		_user: &Option<U>,
 		path: P,
 		start_pos: u64,
-	) -> FtpResult<Self::File> {
+	) -> FtpResult<Box<dyn AsyncRead + Send + Sync + Unpin>> {
 		match &self.find(path)?.content {
 			MemFileType::Dir => Err(FtpError::from(ErrorKind::PermanentFileNotAvailable)),
-			MemFileType::File(content) => Ok(Cursor::new(content[start_pos as usize..].to_vec())),
+			MemFileType::File(content) => Ok(Box::new(Cursor::new(content[start_pos as usize..].to_vec()))),
 		}
 	}
 
@@ -226,7 +227,7 @@ impl<U: Send + Sync + std::fmt::Debug> StorageBackend<U> for MemStorage {
 		}
 	}
 
-	async fn put<P: AsRef<Path> + Send, R: tokio::io::AsyncRead + Send + Sync + 'static + Unpin>(
+	async fn put<P: AsRef<Path> + Send, R: AsyncRead + Send + Sync + 'static + Unpin>(
 		&self,
 		_user: &Option<U>,
 		_bytes: R,
@@ -244,7 +245,7 @@ impl<U: Send + Sync + std::fmt::Debug> StorageBackend<U> for MemStorage {
 	async fn mkd<P: AsRef<Path> + Send>(&self, _user: &Option<U>, _path: P) -> FtpResult<()> {
 		Self::deny()
 	}
-	async fn rename<P: AsRef<Path> + Send>(&self, _user: &Option<U>, _from: P, _to: P) -> FtpResult<()> {
+	async fn rename<P: AsRef<Path> + Send + Debug>(&self, _user: &Option<U>, _from: P, _to: P) -> FtpResult<()> {
 		Self::deny()
 	}
 }

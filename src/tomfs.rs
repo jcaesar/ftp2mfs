@@ -181,7 +181,7 @@ impl ToMfs {
 				ResetSyncToCurrent,
 				AcceptSynced,
 				LeaveNonExisting,
-			};
+			}
 			use crate::nabla::FileInfo;
 			use State::*;
 			let existing = curr.files.get(a);

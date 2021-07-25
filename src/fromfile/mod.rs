@@ -92,7 +92,7 @@ impl crate::suite::Suite for Suite {
 #[async_trait::async_trait]
 impl crate::suite::Provider for Suite {
 	async fn get(&self, p: &Path) -> Result<Box<dyn AsyncRead + Send + Sync + Unpin>> {
-		use tokio_util::compat::Tokio02AsyncReadCompatExt;
+		use tokio_util::compat::TokioAsyncReadCompatExt;
 		Ok(Box::new(
 			tokio::fs::File::open(self.path().join(p)).await.unwrap().compat(),
 		))

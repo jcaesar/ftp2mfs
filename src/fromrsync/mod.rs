@@ -86,15 +86,15 @@ impl crate::suite::Provider for Suite {
 			let file = files.get(p).context("No such file on server")?;
 			file.clone()
 		};
-		use tokio_util::compat::Tokio02AsyncReadCompatExt;
-		Ok(Box::new(
+		use tokio_util::compat::*;
+		Ok(Box::new(Box::pin(
 			self.client
 				.as_ref()
 				.context("Connection never established")?
 				.get(&file)
 				.await?
 				.compat(),
-		))
+		)))
 	}
 	fn base(&self) -> &Url {
 		&self.source

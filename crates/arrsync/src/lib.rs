@@ -2,7 +2,7 @@
 //! files from rsyncd servers.
 //!
 //! Quick example:
-//! ```
+//! ```no_run
 //! // Print all the Manifest files for gentoo ebuilds
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
@@ -21,7 +21,7 @@
 //!         ) -> anyhow::Result<()> {
 //!             use tokio::io::AsyncReadExt;
 //!             let mut content = vec![];
-//!             client.get(&file).await?.read_to_end(&mut content).await?;
+//!             Box::pin(client.get(&file).await?).read_to_end(&mut content).await?;
 //!             // "Race" to finish. Ignored for simplicity reasons.
 //!             print!("{}", String::from_utf8(content)?);
 //!             Ok(())
