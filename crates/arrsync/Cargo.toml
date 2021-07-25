@@ -9,10 +9,11 @@ keywords = ["rsync"]
 categories = [ "filesystem", "network-programming" ]
 repository = "https://github.com/jcaesar/ftp2mfs"
 description = "Asynchronous Retrieving Rust rSYNc Client"
+resolver = "2"
 
 [dependencies]
-tokio = { version = "1.7.1", features = ["io-util", "full"] }
-tokio-util = { version = "0.6.7", features = ["io", "full"] }
+tokio = { version = "1.7.1", features = ["net", "time", "io-util", "rt"] }
+tokio-util = { version = "0.6.7", features = ["io"] }
 url = "2.2.2"
 anyhow = "1.0.41"
 hexdump = "0.1.1"

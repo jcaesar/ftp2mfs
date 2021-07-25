@@ -9,6 +9,7 @@ repository = "https://github.com/jcaesar/ftp2mfs"
 categories = ["command-line-utilities"]
 keywords = ["ftp", "http", "rsync", "ipfs", "mfs"]
 description = "Utility for syncing FTP folders into IPFS"
+resolver = "2"
 
 [dependencies]
 clap = "3.0.0-beta.2"
