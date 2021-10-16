@@ -1,8 +1,10 @@
 use anyhow::{ensure, Context, Result};
 use chrono::prelude::*;
 use clap::Clap;
+use custom_debug::Debug;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use serde::Deserialize;
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::time::Instant;
@@ -27,6 +29,17 @@ mod tomfs;
 use crate::nabla::SyncActs;
 use crate::tomfs::ToMfs;
 
+fn snip_fmt<T>(val: &Option<T>, f: &mut fmt::Formatter) -> fmt::Result {
+	write!(
+		f,
+		"{}",
+		match val {
+			Some(_) => "Some(...snip)",
+			None => "None",
+		}
+	)
+}
+
 #[derive(Clap, Debug)]
 #[clap(about, version)]
 pub struct Opts {
@@ -36,6 +49,14 @@ pub struct Opts {
 	/// IPFS api url
 	#[clap(short, long, default_value = "http://localhost:5001/", env = "IPFS_API")]
 	api: String,
+	/// Verbosity
+	///
+	/// Takes an env_logger spec when running normally (e.g. info,arrsync=debug,ftp2mfs=trace)
+	/// Takes a single log level name when running with systemd-journald (e.g. warn)
+	///
+	/// ​
+	#[clap(short, long, default_value = "info", env = "RUST_LOG")]
+	log_level: String,
 	#[clap(subcommand)]
 	cmd: Option<Command>,
 }
@@ -50,6 +71,7 @@ pub enum Command {
 		user: Option<String>,
 		/// FTP password override
 		#[clap(short, long)]
+		#[debug(with = "snip_fmt")]
 		pass: Option<String>,
 	},
 	/// Verify (and rewrite if necessary) the state file
@@ -85,6 +107,7 @@ pub struct Settings {
 	user: Option<String>,
 	/// password - for FTP mostly just an e-mail
 	#[serde(default)]
+	#[debug(with = "snip_fmt")]
 	pass: Option<String>,
 	/// workdir
 	#[serde(default)]
@@ -104,15 +127,29 @@ pub struct Settings {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
 	let start = Instant::now();
-
-	env_logger::init();
-
 	let mut opts: Opts = Opts::parse();
 	if opts.cmd.is_none() {
 		opts.cmd = Some(Command::SyncData { user: None, pass: None });
 	}
 
+	if systemd_journal_logger::connected_to_journal() {
+		systemd_journal_logger::init_with_extra_fields(vec![("VERSION", env!("CARGO_PKG_VERSION"))])
+			.context("Failed to init journald logger")?;
+		log::set_max_level(
+			opts.log_level
+				.parse()
+				.context(format!("Can't parse {} as a log level", opts.log_level))?,
+		);
+	} else {
+		env_logger::Builder::from_default_env()
+			.parse_filters(&opts.log_level)
+			.init();
+	}
+
+	log::debug!("Command Line {:#?}", opts);
+
 	let settings = get_settings(&opts.config).context(format!("Loading {:?}", &opts.config))?;
+	log::debug!("Loaded {:#?}", settings);
 
 	let out = ToMfs::new(&opts.api, settings)
 		.await

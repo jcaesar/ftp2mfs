@@ -56,7 +56,7 @@ ignore:
   - "/*"
   - "!a"
   - "!b"
-  # setting RUST_LOG=debug as environment variable may help with debugging ignore rules
+  # setting --log-level=debug may help with debugging ignore rules
 
 # FTP credentials, defaults to anonymous, can be overwritten from command line
 user: anonymous

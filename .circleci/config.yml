@@ -1,9 +1,9 @@
 version: 2
 
 jobs:
-  build-51: # Apparently the latest version applicable to my code. quite recent. :/
+  build-54: # Apparently the latest version applicable to my code. quite recent. :/
     docker:
-        - image: circleci/rust:1.51
+        - image: circleci/rust:1.54
     steps: &build-steps
       - checkout
       - run:
@@ -50,5 +50,5 @@ workflows:
   build_and_test:
     jobs:
       - build
-      - build-51
+      - build-54
       - fmt
