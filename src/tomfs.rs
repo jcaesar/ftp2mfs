@@ -167,7 +167,9 @@ impl ToMfs {
 		let SyncActs { get, delete, .. } = SyncActs::new(curr.clone(), sync.clone(), &self.settings)?;
 		for (d, _) in delete.iter() {
 			if !self.mfs.stat(self.syncdata().join(d)).await?.is_some() {
-				curr.files.remove(d);
+				// TODO: Here, not having a tree representation of the folder structure really stings.
+				// The delete might be on a folder, but I need to delete all its content
+				curr.files.retain(|f, _| f.strip_prefix(d).is_err());
 				// We could also restore it from curr, but we deleted it once because it was gone
 				// from the server. Better keep it deleted locally, too.
 			}
