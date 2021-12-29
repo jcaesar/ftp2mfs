@@ -1,6 +1,5 @@
 use anyhow::{ensure, Context, Result};
 use chrono::prelude::*;
-use clap::Clap;
 use custom_debug::Debug;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use serde::Deserialize;
@@ -40,8 +39,8 @@ fn snip_fmt<T>(val: &Option<T>, f: &mut fmt::Formatter) -> fmt::Result {
 	)
 }
 
-#[derive(Clap, Debug)]
-#[clap(about, version)]
+#[derive(clap::Parser, Debug)]
+#[clap(about, version, author)]
 pub struct Opts {
 	/// IPFS files (mfs) base path
 	#[clap(short, long)]
@@ -53,15 +52,13 @@ pub struct Opts {
 	///
 	/// Takes an env_logger spec when running normally (e.g. info,arrsync=debug,ftp2mfs=trace)
 	/// Takes a single log level name when running with systemd-journald (e.g. warn)
-	///
-	/// ​
 	#[clap(short, long, default_value = "info", env = "RUST_LOG")]
 	log_level: String,
 	#[clap(subcommand)]
 	cmd: Option<Command>,
 }
 
-#[derive(Clap, Debug)]
+#[derive(clap::Subcommand, Debug)]
 pub enum Command {
 	/// Main operation - Sync data from source to MFS
 	#[clap(name = "sync")]
@@ -81,7 +78,7 @@ pub enum Command {
 	Scrub(Scrub),
 }
 
-#[derive(Clap, Debug)]
+#[derive(clap::Parser, Debug)]
 pub struct Scrub {
 	/// Whether to pretend that files existing in the folder structure but not in the
 	/// state file (thus likely also not on the server) have existed on the server
@@ -127,7 +124,7 @@ pub struct Settings {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
 	let start = Instant::now();
-	let mut opts: Opts = Opts::parse();
+	let mut opts: Opts = clap::Parser::parse();
 	if opts.cmd.is_none() {
 		opts.cmd = Some(Command::SyncData { user: None, pass: None });
 	}

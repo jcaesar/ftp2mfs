@@ -1,5 +1,4 @@
 use anyhow::Result;
-use clap::Clap;
 use failure::ResultExt;
 use ipfs_api::IpfsClient;
 use priority_queue::PriorityQueue;
@@ -15,7 +14,7 @@ use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 use tokio::task::JoinHandle;
 use tokio::time::{delay_for, timeout, Duration, Instant};
 
-#[derive(Clap, Debug)]
+#[derive(clap::Parser, Debug)]
 #[clap(about, version)]
 struct Opts {
 	/// IPFS api url
@@ -61,7 +60,7 @@ struct Folders {
 
 lazy_static::lazy_static! {
 	static ref TREE : Mutex<Folders> = Default::default();
-	static ref OPTS : Opts = Opts::parse();
+	static ref OPTS : Opts = clap::Parser::parse();
 	static ref GEN : AsyncMutex<bool> = Default::default(); // Lock so only one walk is active in parallel
 	static ref J : Semaphore = Semaphore::new(OPTS.parallel_reprovides);
 	static ref CLIENTS : Vec<IpfsClient> = std::iter::repeat(())
