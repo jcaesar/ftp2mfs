@@ -11,7 +11,7 @@ ipfs-api = "0.8.0-rc.2"
 tokio = { version = "0.2", features = ["sync", "rt-core", "macros", "signal"] }
 anyhow = "1.0"
 failure = "0.1"
-clap = "3.0.0-beta.1"
+clap = "3.0.0"
 async-recursion = "0.3"
 lazy_static = "1.4"
 priority-queue = "1.0"
