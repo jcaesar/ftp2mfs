@@ -196,10 +196,11 @@ impl RsyncClient {
 			hello
 		);
 		let ver = hello[rsyncd.len()..(hello.len() - 1)]
-			.split('.')
-			.map(str::parse)
-			.collect::<Result<Vec<u64>, _>>()
-			.context(format!("Parsing server version from {}", hello))?;
+			.split(' ')
+			.next()
+			.map(|version| version.split('.').map(str::parse).collect::<Result<Vec<u64>, _>>())
+			.ok_or(anyhow::anyhow!(format!("Version nor present")))
+			.context(format!("Parsing server version from {}", hello))??;
 		anyhow::ensure!(
 			ver >= vec![27, 0],
 			"Server version {} not supported - need 27.0 minimum.",
@@ -255,7 +256,9 @@ impl RsyncClient {
 				mtime_buf
 			} else {
 				let ts = read.read_i32_le().await?;
+				#[allow(deprecated)]
 				let naive = NaiveDateTime::from_timestamp(ts as i64, 0);
+				#[allow(deprecated)]
 				let datetime: DateTime<Utc> = DateTime::from_utc(naive, Utc);
 				Some(datetime)
 			};
@@ -298,7 +301,7 @@ impl RsyncClient {
 		}
 		ret.sort_unstable_by(|a, b| a.path.cmp(&b.path));
 		// Hmm. rsyn also dedupes. I've never seen dupes, so I don't know why.
-		for (i, mut f) in ret.iter_mut().enumerate() {
+		for (i, f) in ret.iter_mut().enumerate() {
 			f.idx = i;
 			log::debug!("{:>6} {}", f.idx, f);
 		}

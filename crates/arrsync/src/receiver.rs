@@ -132,7 +132,7 @@ impl RequestsInner {
 	}
 
 	pub fn refresh_timeout(&mut self) {
-		for to in self.timeout.as_mut() {
+		if let Some(to) = self.timeout.as_mut() {
 			*to = Self::timeout();
 		}
 	}
