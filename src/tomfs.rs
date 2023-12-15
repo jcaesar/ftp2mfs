@@ -43,13 +43,13 @@ impl ToMfs {
 		self.workdir().join("prev")
 	}
 	fn currdata(&self) -> PathBuf {
-		self.curr().join("data")
+		self.curr().to_path_buf()
 	}
 	fn syncdata(&self) -> PathBuf {
 		self.sync().join("data")
 	}
 	fn currmeta(&self) -> PathBuf {
-		self.curr().join("state")
+		self.curr().join(".sync/state")
 	}
 	fn syncmeta(&self) -> PathBuf {
 		self.sync().join("state")
@@ -58,7 +58,7 @@ impl ToMfs {
 		self.sync().join("lastsync")
 	}
 	fn currpid(&self) -> PathBuf {
-		self.curr().join("pid")
+		self.curr().join(".sync/pid")
 	}
 	fn piddir(&self) -> PathBuf {
 		self.sync().join("pid")
