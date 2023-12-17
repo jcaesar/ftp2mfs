@@ -43,7 +43,7 @@ where
 			mrev.get(&ancestor.to_owned())
 				.iter()
 				.flat_map(|dependee| dependee.iter())
-				.map(move |dependee| (child.clone(), dependee.clone()))
+				.map(move |dependee| (child, dependee))
 				.collect::<Vec<(_, _)>>()
 		})
 		.fold(HashMap::new(), |mut edges, (k, v)| {
@@ -98,7 +98,7 @@ where
 	};
 	for p in changes {
 		for er in p.as_ref().ancestors() {
-			for es in mrev.get(&er.to_path_buf()) {
+			while let Some(es) = mrev.get(&er.to_path_buf()) {
 				for e in es {
 					visit(e);
 				}
